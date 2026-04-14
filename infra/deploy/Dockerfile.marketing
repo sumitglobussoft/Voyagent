@@ -100,9 +100,14 @@ RUN groupadd --system --gid 1001 voyagent \
 
 WORKDIR /app
 
-# Next.js standalone output bundles a minimal node_modules tree.
+# Next.js standalone output bundles a minimal node_modules tree. For this
+# monorepo the flattened entry is /app/server.js (not nested under
+# apps/marketing/). Static assets and public/ are copied to both the
+# flat AND the nested paths so whichever Next looks for is populated.
 COPY --from=build --chown=voyagent:voyagent /app/apps/marketing/.next/standalone ./
+COPY --from=build --chown=voyagent:voyagent /app/apps/marketing/.next/static      ./.next/static
 COPY --from=build --chown=voyagent:voyagent /app/apps/marketing/.next/static      ./apps/marketing/.next/static
+COPY --from=build --chown=voyagent:voyagent /app/apps/marketing/public            ./public
 COPY --from=build --chown=voyagent:voyagent /app/apps/marketing/public            ./apps/marketing/public
 
 USER voyagent
@@ -112,4 +117,4 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD node -e "require('http').get('http://127.0.0.1:3000/', r => process.exit(r.statusCode>=500?1:0)).on('error', () => process.exit(1))"
 
-CMD ["node", "apps/marketing/server.js"]
+CMD ["node", "server.js"]
