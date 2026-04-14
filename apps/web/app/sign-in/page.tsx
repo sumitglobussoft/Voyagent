@@ -13,12 +13,14 @@ export const metadata = {
   title: "Sign in · Voyagent",
 };
 
-export default function SignInPage({
+// Next 15 made `searchParams` a Promise on server pages.
+export default async function SignInPage({
   searchParams,
 }: {
-  searchParams?: { next?: string };
+  searchParams?: Promise<{ next?: string }>;
 }) {
-  const next = searchParams?.next ?? "/app/chat";
+  const params = (await searchParams) ?? {};
+  const next = params.next ?? "/app/chat";
 
   return (
     <main
