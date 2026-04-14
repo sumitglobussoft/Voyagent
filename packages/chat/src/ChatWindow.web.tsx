@@ -17,9 +17,9 @@ import { useEffect, useState, type ReactElement } from "react";
 
 import type { VoyagentClient } from "@voyagent/sdk";
 
-import { ApprovalPrompt } from "./ApprovalPrompt.js";
-import { ComposerBar } from "./ComposerBar.js";
-import { MessageList } from "./MessageList.js";
+import { ApprovalPrompt } from "./ApprovalPrompt.web.js";
+import { ComposerBar } from "./ComposerBar.web.js";
+import { MessageList } from "./MessageList.web.js";
 import { useAgentStream } from "./useAgentStream.js";
 
 export interface ChatWindowProps {
@@ -126,7 +126,7 @@ function ChatBody({
       <ComposerBar
         disabled={disabled}
         disabledReason={disabledReason}
-        onSubmit={async (text) => {
+        onSubmit={async (text: string) => {
           await stream.send(text);
         }}
       />

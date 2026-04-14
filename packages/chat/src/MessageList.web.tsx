@@ -9,7 +9,7 @@
  */
 import { useEffect, useRef, type ReactElement } from "react";
 
-import { ToolCallCard } from "./ToolCallCard.js";
+import { ToolCallCard } from "./ToolCallCard.web.js";
 import type { ChatMessage } from "./types.js";
 
 export interface MessageListProps {
