@@ -1,0 +1,108 @@
+# syntax=docker/dockerfile:1.7
+#
+# Voyagent authenticated web app (@voyagent/web) — production image.
+#
+# apps/web/next.config.mjs does NOT declare `output: "standalone"` (and this
+# Dockerfile is forbidden from editing it), so the runner ships the full
+# workspace-installed node_modules and starts via `next start` on port 3001.
+#
+# Build arg:
+#   VOYAGENT_VERSION  OCI label version; defaults to 0.0.0-dev.
+
+ARG VOYAGENT_VERSION=0.0.0-dev
+
+########
+# deps #
+########
+FROM node:20.17-bookworm-slim AS deps
+
+ENV PNPM_HOME=/pnpm \
+    PATH=/pnpm:$PATH \
+    CI=1
+
+RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
+
+WORKDIR /app
+
+COPY pnpm-workspace.yaml package.json ./
+COPY apps/marketing/package.json apps/marketing/package.json
+COPY apps/web/package.json apps/web/package.json
+COPY apps/desktop/package.json apps/desktop/package.json
+COPY apps/mobile/package.json apps/mobile/package.json
+COPY packages/core/package.json packages/core/package.json
+COPY packages/sdk/package.json packages/sdk/package.json
+COPY packages/config/package.json packages/config/package.json
+COPY packages/ui/package.json packages/ui/package.json
+COPY packages/icons/package.json packages/icons/package.json
+COPY packages/chat/package.json packages/chat/package.json
+
+RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
+    pnpm install --frozen-lockfile=false
+
+#########
+# build #
+#########
+FROM node:20.17-bookworm-slim AS build
+
+ENV PNPM_HOME=/pnpm \
+    PATH=/pnpm:$PATH \
+    NEXT_TELEMETRY_DISABLED=1 \
+    CI=1
+
+RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
+
+WORKDIR /app
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/apps/web/node_modules ./apps/web/node_modules
+COPY --from=deps /app/packages ./packages
+
+COPY . .
+
+RUN pnpm --filter @voyagent/core \
+         --filter @voyagent/config \
+         --filter @voyagent/sdk \
+         --filter @voyagent/chat \
+         --filter @voyagent/web... \
+         build
+
+##########
+# runner #
+##########
+FROM node:20.17-bookworm-slim AS runner
+
+ARG VOYAGENT_VERSION
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    PORT=3001 \
+    HOSTNAME=0.0.0.0
+
+LABEL org.opencontainers.image.title="voyagent-web" \
+      org.opencontainers.image.source="https://github.com/globusdemos/voyagent" \
+      org.opencontainers.image.version="${VOYAGENT_VERSION}"
+
+RUN groupadd --system --gid 1001 voyagent \
+ && useradd  --system --uid 1001 --gid 1001 --create-home --home-dir /home/voyagent voyagent
+
+WORKDIR /app
+
+# Copy the workspace tree that contains the built app. We include:
+#   - the root node_modules (hoisted deps)
+#   - the apps/web sources + .next build
+#   - workspace packages (symlinked into node_modules)
+COPY --from=build --chown=voyagent:voyagent /app/package.json         ./package.json
+COPY --from=build --chown=voyagent:voyagent /app/pnpm-workspace.yaml  ./pnpm-workspace.yaml
+COPY --from=build --chown=voyagent:voyagent /app/node_modules         ./node_modules
+COPY --from=build --chown=voyagent:voyagent /app/packages             ./packages
+COPY --from=build --chown=voyagent:voyagent /app/apps/web             ./apps/web
+
+USER voyagent
+
+WORKDIR /app/apps/web
+
+EXPOSE 3001
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD node -e "require('http').get('http://127.0.0.1:3001/', r => process.exit(r.statusCode>=500?1:0)).on('error', () => process.exit(1))"
+
+CMD ["node_modules/.bin/next", "start", "-H", "0.0.0.0", "-p", "3001"]

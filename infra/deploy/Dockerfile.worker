@@ -1,0 +1,87 @@
+# syntax=docker/dockerfile:1.7
+#
+# Voyagent Temporal worker (services/worker) — skeleton production image.
+#
+# The worker package is a scaffold today (no entrypoint script yet). The
+# image exists so compose `build` succeeds and the skeleton can be brought
+# online when real workflows land. CMD sleeps so the container doesn't
+# flap-restart when started without a real task queue to serve.
+
+ARG VOYAGENT_VERSION=0.0.0-dev
+
+########
+# deps #
+########
+FROM python:3.12.7-slim-bookworm AS deps
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1 \
+    UV_PROJECT_ENVIRONMENT=/app/.venv
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends build-essential ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /uvx /usr/local/bin/
+
+WORKDIR /app
+
+COPY pyproject.toml ./pyproject.toml
+COPY services/api/pyproject.toml                 services/api/pyproject.toml
+COPY services/agent_runtime/pyproject.toml       services/agent_runtime/pyproject.toml
+COPY services/worker/pyproject.toml              services/worker/pyproject.toml
+COPY services/browser_runner/pyproject.toml      services/browser_runner/pyproject.toml
+COPY schemas/canonical/pyproject.toml            schemas/canonical/pyproject.toml
+COPY schemas/storage/pyproject.toml              schemas/storage/pyproject.toml
+COPY drivers/_contracts/pyproject.toml           drivers/_contracts/pyproject.toml
+COPY drivers/amadeus/pyproject.toml              drivers/amadeus/pyproject.toml
+COPY drivers/bsp_india/pyproject.toml            drivers/bsp_india/pyproject.toml
+COPY drivers/tally/pyproject.toml                drivers/tally/pyproject.toml
+COPY drivers/vfs/pyproject.toml                  drivers/vfs/pyproject.toml
+COPY tests/pyproject.toml                        tests/pyproject.toml
+
+COPY schemas ./schemas
+COPY drivers ./drivers
+COPY services ./services
+COPY tests    ./tests
+
+RUN --mount=type=cache,id=uv,target=/root/.cache/uv \
+    uv sync --no-dev --frozen=false \
+        --package voyagent-worker \
+        --package voyagent-schemas-canonical
+
+##########
+# runner #
+##########
+FROM python:3.12.7-slim-bookworm AS runner
+
+ARG VOYAGENT_VERSION
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/app/.venv/bin:$PATH" \
+    VIRTUAL_ENV=/app/.venv
+
+LABEL org.opencontainers.image.title="voyagent-worker" \
+      org.opencontainers.image.source="https://github.com/globusdemos/voyagent" \
+      org.opencontainers.image.version="${VOYAGENT_VERSION}"
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd --system --gid 1001 voyagent \
+ && useradd  --system --uid 1001 --gid 1001 --create-home --home-dir /home/voyagent voyagent
+
+WORKDIR /app
+
+COPY --from=deps --chown=voyagent:voyagent /app/.venv    /app/.venv
+COPY --from=deps --chown=voyagent:voyagent /app/services /app/services
+COPY --from=deps --chown=voyagent:voyagent /app/schemas  /app/schemas
+
+USER voyagent
+
+# Placeholder: the service is a scaffold. Sleep so docker compose --profile
+# future can bring it up without an instant restart loop. Replace with
+# `voyagent-worker` (or equivalent) once the worker ships an entrypoint.
+CMD ["python", "-c", "import time; print('voyagent-worker: skeleton image — no entrypoint yet'); time.sleep(2**31-1)"]

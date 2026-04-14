@@ -1,0 +1,119 @@
+# syntax=docker/dockerfile:1.7
+#
+# Voyagent FastAPI service (services/api) — production image.
+#
+# The API imports the agent runtime, canonical + storage schemas, and the
+# Amadeus driver in-process, so we install the entire uv workspace. Stage 1
+# warms the wheel cache from manifests only; stage 2 copies source and
+# produces the runtime image.
+#
+# Build arg:
+#   VOYAGENT_VERSION  OCI label version; defaults to 0.0.0-dev.
+#
+# Exposed port: 8000 (container-internal only).
+
+ARG VOYAGENT_VERSION=0.0.0-dev
+
+########
+# deps #
+########
+FROM python:3.12.7-slim-bookworm AS deps
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1 \
+    UV_PROJECT_ENVIRONMENT=/app/.venv
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      build-essential \
+      curl \
+      ca-certificates \
+      libpq5 \
+ && rm -rf /var/lib/apt/lists/*
+
+# Pinned uv, installed by copying from the official image.
+COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /uvx /usr/local/bin/
+
+WORKDIR /app
+
+# Copy workspace manifests for a cacheable dependency resolve.
+COPY pyproject.toml ./pyproject.toml
+COPY services/api/pyproject.toml                 services/api/pyproject.toml
+COPY services/agent_runtime/pyproject.toml       services/agent_runtime/pyproject.toml
+COPY services/worker/pyproject.toml              services/worker/pyproject.toml
+COPY services/browser_runner/pyproject.toml      services/browser_runner/pyproject.toml
+COPY schemas/canonical/pyproject.toml            schemas/canonical/pyproject.toml
+COPY schemas/storage/pyproject.toml              schemas/storage/pyproject.toml
+COPY drivers/_contracts/pyproject.toml           drivers/_contracts/pyproject.toml
+COPY drivers/amadeus/pyproject.toml              drivers/amadeus/pyproject.toml
+COPY drivers/bsp_india/pyproject.toml            drivers/bsp_india/pyproject.toml
+COPY drivers/tally/pyproject.toml                drivers/tally/pyproject.toml
+COPY drivers/vfs/pyproject.toml                  drivers/vfs/pyproject.toml
+COPY tests/pyproject.toml                        tests/pyproject.toml
+
+# Full source is required for `uv sync` because every workspace member is
+# built as an editable wheel; skipping sources here would fail the build
+# graph. We keep deps + source in the same stage and rely on COPY order
+# to cache the apt layer above.
+COPY schemas ./schemas
+COPY drivers ./drivers
+COPY services ./services
+COPY tests    ./tests
+COPY infra    ./infra
+
+RUN --mount=type=cache,id=uv,target=/root/.cache/uv \
+    uv sync --no-dev --frozen=false \
+        --package voyagent-api \
+        --package voyagent-schemas-canonical \
+        --package voyagent-schemas-storage \
+        --package voyagent-agent-runtime \
+        --package voyagent-driver-contracts \
+        --package voyagent-driver-amadeus \
+ && uv pip install --python /app/.venv/bin/python alembic
+
+##########
+# runner #
+##########
+FROM python:3.12.7-slim-bookworm AS runner
+
+ARG VOYAGENT_VERSION
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/app/.venv/bin:$PATH" \
+    VIRTUAL_ENV=/app/.venv \
+    VOYAGENT_VERSION=${VOYAGENT_VERSION}
+
+LABEL org.opencontainers.image.title="voyagent-api" \
+      org.opencontainers.image.source="https://github.com/globusdemos/voyagent" \
+      org.opencontainers.image.version="${VOYAGENT_VERSION}"
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      curl \
+      ca-certificates \
+      libpq5 \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd --system --gid 1001 voyagent \
+ && useradd  --system --uid 1001 --gid 1001 --create-home --home-dir /home/voyagent voyagent
+
+WORKDIR /app
+
+COPY --from=deps --chown=voyagent:voyagent /app/.venv    /app/.venv
+COPY --from=deps --chown=voyagent:voyagent /app/services /app/services
+COPY --from=deps --chown=voyagent:voyagent /app/schemas  /app/schemas
+COPY --from=deps --chown=voyagent:voyagent /app/drivers  /app/drivers
+COPY --from=deps --chown=voyagent:voyagent /app/infra    /app/infra
+COPY --from=deps --chown=voyagent:voyagent /app/pyproject.toml /app/pyproject.toml
+
+USER voyagent
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
+  CMD curl -fsS http://127.0.0.1:8000/health || exit 1
+
+# Run uvicorn directly (production-safe: no --reload).
+CMD ["uvicorn", "voyagent_api.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]

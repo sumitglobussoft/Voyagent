@@ -1,0 +1,82 @@
+# syntax=docker/dockerfile:1.7
+#
+# Voyagent browser_runner (services/browser_runner) — production image.
+#
+# Uses Microsoft's Playwright base image so the Chromium/Firefox/WebKit
+# browsers and their OS-level dependencies come pre-installed. Only the
+# uv workspace needs to be layered on top.
+#
+# Exposed ports: none — this is a long-running task worker that connects
+# out to Redis / S3.
+
+ARG VOYAGENT_VERSION=0.0.0-dev
+
+########
+# deps #
+########
+FROM mcr.microsoft.com/playwright/python:v1.48.0-jammy AS deps
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1 \
+    UV_PROJECT_ENVIRONMENT=/app/.venv \
+    PATH="/app/.venv/bin:/usr/local/bin:${PATH}"
+
+# The Playwright base image already ships Python; we only need uv.
+COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /uvx /usr/local/bin/
+
+WORKDIR /app
+
+COPY pyproject.toml ./pyproject.toml
+COPY services/api/pyproject.toml                 services/api/pyproject.toml
+COPY services/agent_runtime/pyproject.toml       services/agent_runtime/pyproject.toml
+COPY services/worker/pyproject.toml              services/worker/pyproject.toml
+COPY services/browser_runner/pyproject.toml      services/browser_runner/pyproject.toml
+COPY schemas/canonical/pyproject.toml            schemas/canonical/pyproject.toml
+COPY schemas/storage/pyproject.toml              schemas/storage/pyproject.toml
+COPY drivers/_contracts/pyproject.toml           drivers/_contracts/pyproject.toml
+COPY drivers/amadeus/pyproject.toml              drivers/amadeus/pyproject.toml
+COPY drivers/bsp_india/pyproject.toml            drivers/bsp_india/pyproject.toml
+COPY drivers/tally/pyproject.toml                drivers/tally/pyproject.toml
+COPY drivers/vfs/pyproject.toml                  drivers/vfs/pyproject.toml
+COPY tests/pyproject.toml                        tests/pyproject.toml
+
+COPY schemas ./schemas
+COPY drivers ./drivers
+COPY services ./services
+COPY tests    ./tests
+
+RUN --mount=type=cache,id=uv,target=/root/.cache/uv \
+    uv sync --no-dev --frozen=false \
+        --package voyagent-browser-runner \
+        --package voyagent-schemas-canonical \
+        --package voyagent-driver-contracts
+
+##########
+# runner #
+##########
+FROM mcr.microsoft.com/playwright/python:v1.48.0-jammy AS runner
+
+ARG VOYAGENT_VERSION
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/app/.venv/bin:${PATH}" \
+    VIRTUAL_ENV=/app/.venv
+
+LABEL org.opencontainers.image.title="voyagent-browser-runner" \
+      org.opencontainers.image.source="https://github.com/globusdemos/voyagent" \
+      org.opencontainers.image.version="${VOYAGENT_VERSION}"
+
+# The Playwright image's default user is `pwuser` (uid 1000). Reuse it so
+# Chromium's sandbox works out of the box.
+WORKDIR /app
+
+COPY --from=deps --chown=pwuser:pwuser /app/.venv    /app/.venv
+COPY --from=deps --chown=pwuser:pwuser /app/services /app/services
+COPY --from=deps --chown=pwuser:pwuser /app/schemas  /app/schemas
+COPY --from=deps --chown=pwuser:pwuser /app/drivers  /app/drivers
+
+USER pwuser
+
+CMD ["voyagent-browser-runner", "worker"]

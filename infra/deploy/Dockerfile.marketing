@@ -1,0 +1,115 @@
+# syntax=docker/dockerfile:1.7
+#
+# Voyagent marketing (Next.js) — production image.
+#
+# Build stages:
+#   deps     -> resolves the pnpm workspace (uses package manifests only so
+#               the dep layer is cacheable when source changes).
+#   build    -> copies the full repo, builds the required workspace deps
+#               and then builds @voyagent/marketing with `output: "standalone"`.
+#   runner   -> minimal node runtime serving the standalone bundle as
+#               non-root.
+#
+# Build arg:
+#   VOYAGENT_VERSION  surfaced via OCI labels; defaults to 0.0.0-dev.
+#
+# Exposed port: 3000 (container-internal only).
+
+ARG VOYAGENT_VERSION=0.0.0-dev
+
+########
+# deps #
+########
+FROM node:20.17-bookworm-slim AS deps
+
+ENV PNPM_HOME=/pnpm \
+    PATH=/pnpm:$PATH \
+    CI=1
+
+RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
+
+WORKDIR /app
+
+# Copy the workspace manifests so pnpm can resolve the graph without
+# needing the source tree. Keeping this layer tight maximizes cache hits.
+COPY pnpm-workspace.yaml package.json ./
+COPY apps/marketing/package.json apps/marketing/package.json
+COPY apps/web/package.json apps/web/package.json
+COPY apps/desktop/package.json apps/desktop/package.json
+COPY apps/mobile/package.json apps/mobile/package.json
+COPY packages/core/package.json packages/core/package.json
+COPY packages/sdk/package.json packages/sdk/package.json
+COPY packages/config/package.json packages/config/package.json
+COPY packages/ui/package.json packages/ui/package.json
+COPY packages/icons/package.json packages/icons/package.json
+COPY packages/chat/package.json packages/chat/package.json
+
+# No lockfile exists yet (v0) — install unfrozen.
+RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
+    pnpm install --frozen-lockfile=false
+
+#########
+# build #
+#########
+FROM node:20.17-bookworm-slim AS build
+
+ENV PNPM_HOME=/pnpm \
+    PATH=/pnpm:$PATH \
+    NEXT_TELEMETRY_DISABLED=1 \
+    CI=1
+
+RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
+
+WORKDIR /app
+
+# Pull in already-resolved node_modules from deps.
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/apps/marketing/node_modules ./apps/marketing/node_modules
+# Workspace packages install symlinks into their own node_modules trees.
+# Copy them if present so the build sees the same graph.
+COPY --from=deps /app/packages ./packages
+
+# Copy the rest of the sources.
+COPY . .
+
+# Build workspace deps + the marketing app. `...` pulls transitive deps.
+RUN pnpm --filter @voyagent/core \
+         --filter @voyagent/config \
+         --filter @voyagent/icons \
+         --filter @voyagent/ui \
+         --filter @voyagent/marketing... \
+         build
+
+##########
+# runner #
+##########
+FROM node:20.17-bookworm-slim AS runner
+
+ARG VOYAGENT_VERSION
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    PORT=3000 \
+    HOSTNAME=0.0.0.0
+
+LABEL org.opencontainers.image.title="voyagent-marketing" \
+      org.opencontainers.image.source="https://github.com/globusdemos/voyagent" \
+      org.opencontainers.image.version="${VOYAGENT_VERSION}"
+
+RUN groupadd --system --gid 1001 voyagent \
+ && useradd  --system --uid 1001 --gid 1001 --create-home --home-dir /home/voyagent voyagent
+
+WORKDIR /app
+
+# Next.js standalone output bundles a minimal node_modules tree.
+COPY --from=build --chown=voyagent:voyagent /app/apps/marketing/.next/standalone ./
+COPY --from=build --chown=voyagent:voyagent /app/apps/marketing/.next/static      ./apps/marketing/.next/static
+COPY --from=build --chown=voyagent:voyagent /app/apps/marketing/public            ./apps/marketing/public
+
+USER voyagent
+
+EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD node -e "require('http').get('http://127.0.0.1:3000/', r => process.exit(r.statusCode>=500?1:0)).on('error', () => process.exit(1))"
+
+CMD ["node", "apps/marketing/server.js"]

@@ -1,0 +1,99 @@
+---
+# Voyagent deploy playbook.
+#
+# Stages:
+#   1. bootstrap the host (docker + /opt/voyagent + voyagent user)
+#   2. sync the repo to /opt/voyagent/repo
+#   3. ensure .env.prod exists (operator must hand-fill it first)
+#   4. run deploy.sh remotely
+#
+# Run:
+#   ansible-playbook -i inventory.ini playbook.yml --ask-pass --ask-become-pass
+#
+# Requires Ansible >= 2.14 and `community.general` collection for rsync.
+
+- name: Voyagent single-host deploy
+  hosts: voyagent
+  gather_facts: true
+
+  vars:
+    voyagent_root: /opt/voyagent
+    repo_src: "{{ playbook_dir }}/../../../"   # points at repo root
+    repo_dest: "{{ voyagent_root }}/repo"
+
+  tasks:
+    # ------------------------------------------------------------------
+    - name: Copy bootstrap script
+      become: true
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../scripts/bootstrap.sh"
+        dest: "/tmp/voyagent_bootstrap.sh"
+        mode: "0755"
+
+    - name: Run bootstrap (idempotent)
+      become: true
+      ansible.builtin.command: bash /tmp/voyagent_bootstrap.sh
+      register: bootstrap_out
+      changed_when: "'creating' in bootstrap_out.stdout or 'installing' in bootstrap_out.stdout"
+
+    # ------------------------------------------------------------------
+    - name: Sync repo to host
+      become: true
+      ansible.posix.synchronize:
+        src: "{{ repo_src }}"
+        dest: "{{ repo_dest }}/"
+        delete: false
+        rsync_opts:
+          - "--exclude=.git"
+          - "--exclude=node_modules"
+          - "--exclude=.next"
+          - "--exclude=.venv"
+          - "--exclude=local.env"
+          - "--exclude=.env"
+          - "--exclude=.env.prod"
+          - "--exclude=dist"
+          - "--exclude=__pycache__"
+
+    - name: Ensure /opt/voyagent owned by voyagent
+      become: true
+      ansible.builtin.file:
+        path: "{{ voyagent_root }}"
+        owner: voyagent
+        group: voyagent
+        recurse: true
+        state: directory
+
+    # ------------------------------------------------------------------
+    - name: Ensure .env.prod exists (empty if first-run — operator must fill)
+      become: true
+      ansible.builtin.copy:
+        content: |
+          # Voyagent production env — fill me in by hand.
+          # See /opt/voyagent/repo/infra/deploy/.env.prod.example for the full template.
+        dest: "{{ voyagent_root }}/.env.prod"
+        force: false
+        owner: voyagent
+        group: voyagent
+        mode: "0600"
+
+    - name: Assert .env.prod is not still the skeleton
+      become: true
+      ansible.builtin.shell: |
+        grep -E '^(POSTGRES_PASSWORD|VOYAGENT_KMS_KEY)=' {{ voyagent_root }}/.env.prod \
+          | grep -v 'change-me' \
+          | grep -v '=$' \
+          | wc -l
+      register: env_filled
+      changed_when: false
+      failed_when: env_filled.stdout | int < 2
+
+    # ------------------------------------------------------------------
+    - name: Run deploy.sh on host
+      become: true
+      become_user: voyagent
+      ansible.builtin.command: bash {{ repo_dest }}/infra/deploy/scripts/deploy.sh --no-pull
+      register: deploy_out
+
+    - name: Show deploy output tail
+      ansible.builtin.debug:
+        msg: "{{ deploy_out.stdout_lines[-10:] }}"

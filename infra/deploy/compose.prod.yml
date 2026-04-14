@@ -1,0 +1,245 @@
+# Voyagent production stack — single-host, isolated Docker network.
+#
+# Invocation:
+#   docker compose -f infra/deploy/compose.prod.yml \
+#                  --env-file /opt/voyagent/.env.prod \
+#                  up -d
+#
+# Only one port is published on the host: ${VOYAGENT_EDGE_PORT:-8480}.
+# The host's existing nginx (or Caddy) owns 80/443 and reverse-proxies
+# voyagent.globusdemos.com into that single port. Nothing else on the
+# box is affected.
+
+name: voyagent
+
+networks:
+  voyagent_net:
+    name: voyagent_net
+    driver: bridge
+
+volumes:
+  voyagent_pg_data:
+    name: voyagent_pg_data
+  voyagent_redis_data:
+    name: voyagent_redis_data
+
+services:
+  # ------------------------------------------------------------------ #
+  # Edge nginx — single host-published service                         #
+  # ------------------------------------------------------------------ #
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: voyagent_nginx
+    restart: unless-stopped
+    depends_on:
+      marketing:
+        condition: service_started
+      web:
+        condition: service_started
+      api:
+        condition: service_healthy
+    ports:
+      - "${VOYAGENT_EDGE_PORT:-8480}:80"
+    volumes:
+      - ./nginx/voyagent.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - voyagent_net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ------------------------------------------------------------------ #
+  # Public marketing site (Next.js)                                    #
+  # ------------------------------------------------------------------ #
+  marketing:
+    build:
+      context: ../..
+      dockerfile: infra/deploy/Dockerfile.marketing
+      args:
+        VOYAGENT_VERSION: ${VOYAGENT_VERSION:-0.0.0-dev}
+    image: voyagent-marketing:${VOYAGENT_VERSION:-latest}
+    container_name: voyagent_marketing
+    restart: unless-stopped
+    env_file:
+      - ${VOYAGENT_ENV_FILE:-.env.prod}
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_BASE_URL: ${VOYAGENT_PUBLIC_URL:-http://localhost:8480}/api
+      NEXT_PUBLIC_APP_BASE_URL: ${VOYAGENT_PUBLIC_URL:-http://localhost:8480}/app
+    networks:
+      - voyagent_net
+
+  # ------------------------------------------------------------------ #
+  # Authenticated web app (Next.js)                                    #
+  # ------------------------------------------------------------------ #
+  web:
+    build:
+      context: ../..
+      dockerfile: infra/deploy/Dockerfile.web
+      args:
+        VOYAGENT_VERSION: ${VOYAGENT_VERSION:-0.0.0-dev}
+    image: voyagent-web:${VOYAGENT_VERSION:-latest}
+    container_name: voyagent_web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    env_file:
+      - ${VOYAGENT_ENV_FILE:-.env.prod}
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_BASE_URL: ${VOYAGENT_PUBLIC_URL:-http://localhost:8480}/api
+    networks:
+      - voyagent_net
+
+  # ------------------------------------------------------------------ #
+  # FastAPI service                                                    #
+  # ------------------------------------------------------------------ #
+  api:
+    build:
+      context: ../..
+      dockerfile: infra/deploy/Dockerfile.api
+      args:
+        VOYAGENT_VERSION: ${VOYAGENT_VERSION:-0.0.0-dev}
+    image: voyagent-api:${VOYAGENT_VERSION:-latest}
+    container_name: voyagent_api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - ${VOYAGENT_ENV_FILE:-.env.prod}
+    environment:
+      VOYAGENT_DB_URL: ${VOYAGENT_DB_URL:-postgresql+asyncpg://voyagent:${POSTGRES_PASSWORD}@postgres:5432/voyagent}
+      VOYAGENT_REDIS_URL: ${VOYAGENT_REDIS_URL:-redis://redis:6379/0}
+    networks:
+      - voyagent_net
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ------------------------------------------------------------------ #
+  # Alembic one-shot migration runner (profile: migrate)               #
+  # ------------------------------------------------------------------ #
+  alembic:
+    image: voyagent-api:${VOYAGENT_VERSION:-latest}
+    build:
+      context: ../..
+      dockerfile: infra/deploy/Dockerfile.api
+      args:
+        VOYAGENT_VERSION: ${VOYAGENT_VERSION:-0.0.0-dev}
+    container_name: voyagent_alembic
+    restart: "no"
+    profiles: ["migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - ${VOYAGENT_ENV_FILE:-.env.prod}
+    environment:
+      VOYAGENT_DB_URL: ${VOYAGENT_DB_URL:-postgresql+asyncpg://voyagent:${POSTGRES_PASSWORD}@postgres:5432/voyagent}
+    command: ["alembic", "-c", "infra/alembic/alembic.ini", "upgrade", "head"]
+    networks:
+      - voyagent_net
+
+  # ------------------------------------------------------------------ #
+  # Temporal worker — skeleton, disabled by default                    #
+  # ------------------------------------------------------------------ #
+  worker:
+    build:
+      context: ../..
+      dockerfile: infra/deploy/Dockerfile.worker
+      args:
+        VOYAGENT_VERSION: ${VOYAGENT_VERSION:-0.0.0-dev}
+    image: voyagent-worker:${VOYAGENT_VERSION:-latest}
+    container_name: voyagent_worker
+    restart: unless-stopped
+    profiles: ["future"]
+    depends_on:
+      - temporal
+    env_file:
+      - ${VOYAGENT_ENV_FILE:-.env.prod}
+    networks:
+      - voyagent_net
+
+  # ------------------------------------------------------------------ #
+  # Browser runner (Playwright) — disabled by default                  #
+  # ------------------------------------------------------------------ #
+  browser_runner:
+    build:
+      context: ../..
+      dockerfile: infra/deploy/Dockerfile.browser_runner
+      args:
+        VOYAGENT_VERSION: ${VOYAGENT_VERSION:-0.0.0-dev}
+    image: voyagent-browser-runner:${VOYAGENT_VERSION:-latest}
+    container_name: voyagent_browser_runner
+    restart: unless-stopped
+    profiles: ["portals"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    env_file:
+      - ${VOYAGENT_ENV_FILE:-.env.prod}
+    networks:
+      - voyagent_net
+
+  # ------------------------------------------------------------------ #
+  # Infrastructure                                                     #
+  # ------------------------------------------------------------------ #
+  postgres:
+    image: postgres:16.4-bookworm
+    container_name: voyagent_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: voyagent
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: voyagent
+    volumes:
+      - voyagent_pg_data:/var/lib/postgresql/data
+    networks:
+      - voyagent_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U voyagent -d voyagent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: voyagent_redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - voyagent_redis_data:/data
+    networks:
+      - voyagent_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  temporal:
+    image: temporalio/auto-setup:1.25
+    container_name: voyagent_temporal
+    restart: unless-stopped
+    profiles: ["future"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_USER: voyagent
+      POSTGRES_PWD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_SEEDS: postgres
+    networks:
+      - voyagent_net

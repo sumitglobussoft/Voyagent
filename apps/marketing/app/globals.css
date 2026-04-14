@@ -1,0 +1,183 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Design tokens as CSS variables. A future dark-mode flip only needs to
+ * redeclare these values under a `.dark` selector — the Tailwind palette
+ * stays authoritative for color names, but any place we paint via CSS
+ * reads through the variable so theming is centralized.
+ */
+:root {
+  --color-primary: 11 79 113;
+  --color-accent: 245 158 11;
+  --color-ink: 15 23 42;
+  --color-muted: 100 116 139;
+  --color-paper: 255 255 255;
+  --color-subtle: 248 250 252;
+  --color-border: 226 232 240;
+  --shell-max: 1200px;
+  --prose-max: 720px;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  background: rgb(var(--color-paper));
+  color: rgb(var(--color-ink));
+  font-feature-settings: "ss01", "cv11";
+  font-variant-ligatures: common-ligatures;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+:focus-visible {
+  outline: 2px solid rgb(var(--color-primary));
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.skip-link {
+  position: absolute;
+  left: 12px;
+  top: -48px;
+  background: rgb(var(--color-primary));
+  color: white;
+  padding: 10px 16px;
+  border-radius: 6px;
+  z-index: 100;
+  transition: top 160ms ease;
+  font-weight: 600;
+}
+
+.skip-link:focus {
+  top: 12px;
+}
+
+h1,
+h2,
+h3 {
+  letter-spacing: -0.02em;
+}
+
+.prose-body {
+  max-width: var(--prose-max);
+  line-height: 1.65;
+  font-size: 16px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Docs page prose styling — deliberately small so it inherits the shell
+ * instead of fighting Tailwind's defaults. */
+.doc-prose h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  margin: 0 0 1.5rem;
+  line-height: 1.15;
+}
+.doc-prose h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 2.5rem 0 1rem;
+  line-height: 1.2;
+  border-top: 1px solid rgb(var(--color-border));
+  padding-top: 2rem;
+}
+.doc-prose h3 {
+  font-size: 1.2rem;
+  font-weight: 600;
+  margin: 2rem 0 0.75rem;
+}
+.doc-prose h4 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 1.5rem 0 0.5rem;
+}
+.doc-prose p {
+  margin: 0 0 1rem;
+  line-height: 1.7;
+  color: rgb(var(--color-ink));
+}
+.doc-prose ul,
+.doc-prose ol {
+  margin: 0 0 1rem 1.5rem;
+  line-height: 1.7;
+}
+.doc-prose ul {
+  list-style: disc;
+}
+.doc-prose ol {
+  list-style: decimal;
+}
+.doc-prose li {
+  margin-bottom: 0.35rem;
+}
+.doc-prose a {
+  color: rgb(var(--color-primary));
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.doc-prose code {
+  background: rgb(var(--color-subtle));
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.9em;
+  border: 1px solid rgb(var(--color-border));
+}
+.doc-prose pre {
+  background: rgb(var(--color-subtle));
+  padding: 1rem;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin: 0 0 1rem;
+  border: 1px solid rgb(var(--color-border));
+  font-size: 0.875rem;
+  line-height: 1.55;
+}
+.doc-prose pre code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+.doc-prose blockquote {
+  border-left: 4px solid rgb(var(--color-primary));
+  padding: 0.25rem 0 0.25rem 1rem;
+  color: rgb(var(--color-muted));
+  margin: 0 0 1rem;
+  font-style: italic;
+}
+.doc-prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 1rem;
+  font-size: 0.95rem;
+}
+.doc-prose th,
+.doc-prose td {
+  border: 1px solid rgb(var(--color-border));
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+}
+.doc-prose th {
+  background: rgb(var(--color-subtle));
+  font-weight: 600;
+}
+.doc-prose hr {
+  border: 0;
+  border-top: 1px solid rgb(var(--color-border));
+  margin: 2rem 0;
+}

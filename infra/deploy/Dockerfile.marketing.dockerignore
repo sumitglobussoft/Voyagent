@@ -1,0 +1,29 @@
+# Per-Dockerfile ignore (BuildKit convention). Keeps the build context
+# lean regardless of what's in the repo root.
+.git
+.github
+.gitignore
+.idea
+.vscode
+.turbo
+**/node_modules
+**/.next
+**/dist
+**/build
+**/target
+**/.venv
+**/.pytest_cache
+**/__pycache__
+local.env
+.env
+.env.*
+!.env.example
+*.log
+coverage
+tests
+docs
+# Not needed at marketing build time.
+drivers
+services
+schemas
+infra/alembic

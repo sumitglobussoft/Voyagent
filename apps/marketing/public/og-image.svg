@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0B4F71"/>
+      <stop offset="100%" stop-color="#072F45"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="0%" r="60%">
+      <stop offset="0%" stop-color="#F59E0B" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#F59E0B" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect width="1200" height="630" fill="url(#glow)"/>
+  <g font-family="Inter, system-ui, sans-serif" fill="#ffffff">
+    <g transform="translate(80,120)">
+      <rect x="0" y="0" width="64" height="64" rx="14" fill="#ffffff" fill-opacity="0.12"/>
+      <text x="32" y="44" text-anchor="middle" font-weight="700" font-size="38" fill="#ffffff">V</text>
+    </g>
+    <text x="170" y="168" font-weight="700" font-size="40">Voyagent</text>
+    <text x="80" y="330" font-weight="800" font-size="78" letter-spacing="-2">The Agentic Travel OS.</text>
+    <text x="80" y="410" font-weight="500" font-size="36" fill="#D9EAF3">
+      One chat. Every GDS, every accounting system,
+    </text>
+    <text x="80" y="456" font-weight="500" font-size="36" fill="#D9EAF3">
+      every workflow.
+    </text>
+    <g transform="translate(80,540)" fill="#FDDA8A" font-size="22" font-weight="600">
+      <text x="0" y="0">Early access</text>
+      <text x="200" y="0">India-first</text>
+      <text x="380" y="0">Global-ready</text>
+      <text x="610" y="0">Adapter-first architecture</text>
+    </g>
+  </g>
+</svg>
