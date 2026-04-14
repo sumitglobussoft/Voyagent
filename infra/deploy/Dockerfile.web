@@ -73,9 +73,8 @@ RUN pnpm --filter @voyagent/core \
          --filter @voyagent/ui \
          --filter @voyagent/icons \
          run build \
- && cd apps/web \
  && NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY} \
-    ../../node_modules/.bin/next build --no-lint
+    pnpm --filter @voyagent/web exec next build --no-lint
 
 ##########
 # runner #
