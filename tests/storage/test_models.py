@@ -60,9 +60,10 @@ async def test_full_round_trip(engine: AsyncEngine) -> None:
                 User(
                     id=user_id,
                     tenant_id=tenant_id,
-                    external_id="usr_clerk_123",
+                    external_id=str(user_id),
                     display_name="Ada",
                     email="ada@example.com",
+                    password_hash="$argon2id$v=19$m=65536,t=3,p=4$stub$stub",
                     role=UserRole.AGENCY_ADMIN,
                 )
             )

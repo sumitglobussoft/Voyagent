@@ -9,11 +9,13 @@ from __future__ import annotations
 
 from .accounting import AccountingAgent
 from .base import DomainAgent, DomainAgentRequest
+from .hotels_holidays import HotelsHolidaysAgent
 from .ticketing_visa import TicketingVisaAgent
 
 __all__ = [
     "AccountingAgent",
     "DomainAgent",
     "DomainAgentRequest",
+    "HotelsHolidaysAgent",
     "TicketingVisaAgent",
 ]

@@ -6,7 +6,7 @@ import { actorId, tenantId, useVoyagentClient } from "../lib/sdk";
 
 /**
  * Chat tab — renders the RN build of `@voyagent/chat` against a Voyagent
- * client wired to the current Clerk session. Metro's platform-extension
+ * client wired to the Voyagent auth store. Metro's platform-extension
  * resolution picks `ChatWindow.native.tsx` automatically thanks to the
  * `react-native` conditional export in the package's `exports` map.
  */

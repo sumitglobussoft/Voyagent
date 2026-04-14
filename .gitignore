@@ -69,3 +69,4 @@ logs/
 *.db
 tmp/
 temp/
+deploy_native.py

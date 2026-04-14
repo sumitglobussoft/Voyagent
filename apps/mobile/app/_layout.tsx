@@ -1,44 +1,53 @@
-import { ClerkProvider, SignedIn, SignedOut } from "@clerk/clerk-expo";
-import { Slot, Stack, Tabs } from "expo-router";
-import { StyleSheet, Text, View } from "react-native";
-import type { ReactElement } from "react";
+import { Slot, Stack, Tabs, useRouter, useSegments } from "expo-router";
+import { ActivityIndicator, StyleSheet, View } from "react-native";
+import { useEffect, type ReactElement } from "react";
 
-import { tokenCache } from "../lib/tokenCache";
+import { AuthProvider, useAuth } from "../lib/auth";
 
 /**
  * Root layout.
  *
- * Wraps the app in `<ClerkProvider>` configured with the Expo secure-store
- * `tokenCache`. The auth state then decides which navigator mounts:
- *
- *  - `<SignedIn>`: the three-tab product chrome (Reports / Chat / Pair).
- *  - `<SignedOut>`: a tiny Stack that renders `sign-in` / `sign-up`.
+ * Wraps the app in `<AuthProvider>`, which hydrates the session from
+ * SecureStore on mount (calling `/api/auth/me`, refreshing if needed).
+ * A simple gate below routes between the authed tab stack and the
+ * unauthed sign-in/sign-up stack based on `useAuth().user`.
  */
 export default function RootLayout(): ReactElement {
-  const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY;
+  return (
+    <AuthProvider>
+      <AuthGate />
+    </AuthProvider>
+  );
+}
 
-  if (!publishableKey) {
+function AuthGate(): ReactElement {
+  const { user, loading } = useAuth();
+  const router = useRouter();
+  const segments = useSegments();
+
+  useEffect(() => {
+    if (loading) return;
+    const first = segments[0];
+    const inAuthScreen = first === "sign-in" || first === "sign-up";
+    if (!user && !inAuthScreen) {
+      router.replace("/sign-in");
+    } else if (user && inAuthScreen) {
+      router.replace("/chat");
+    }
+  }, [loading, user, segments, router]);
+
+  if (loading) {
     return (
       <View style={styles.container}>
-        <Text style={styles.title}>Configuration missing</Text>
-        <Text style={styles.body}>
-          Set EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY in apps/mobile/.env.local
-          then restart the Expo dev server.
-        </Text>
+        <ActivityIndicator />
       </View>
     );
   }
 
-  return (
-    <ClerkProvider publishableKey={publishableKey} tokenCache={tokenCache}>
-      <SignedIn>
-        <AuthedTabs />
-      </SignedIn>
-      <SignedOut>
-        <SignedOutStack />
-      </SignedOut>
-    </ClerkProvider>
-  );
+  if (!user) {
+    return <SignedOutStack />;
+  }
+  return <AuthedTabs />;
 }
 
 function AuthedTabs(): ReactElement {
@@ -74,7 +83,6 @@ function AuthedTabs(): ReactElement {
           tabBarAccessibilityLabel: "Desktop pairing tab",
         }}
       />
-      {/* Hide auth screens from the tab bar when signed in. */}
       <Tabs.Screen name="sign-in" options={{ href: null }} />
       <Tabs.Screen name="sign-up" options={{ href: null }} />
     </Tabs>
@@ -98,18 +106,5 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     padding: 24,
     backgroundColor: "#ffffff",
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: "600",
-    marginBottom: 12,
-    color: "#111",
-  },
-  body: {
-    fontSize: 13,
-    color: "#555",
-    textAlign: "center",
-    maxWidth: 420,
-    lineHeight: 20,
   },
 });

@@ -15,11 +15,10 @@ export const metadata: Metadata = {
 /**
  * Sign-in / early-access landing.
  *
- * Until real Clerk credentials are configured on the production host, the
- * authenticated app at `/app` is gated and broken on the public edge.
- * Sending `Sign in` to this page instead keeps the CTA honest: the
- * operator hasn't shipped self-service auth yet, and the fastest path to
- * a real workspace is the contact form.
+ * The authenticated app at `/app` is intentionally gated while the
+ * pilot cohort is closed. Sending `Sign in` to this page keeps the CTA
+ * honest: self-service sign-up is off, and the fastest path to a real
+ * workspace is the contact form.
  */
 export default function EarlyAccessPage() {
   return (

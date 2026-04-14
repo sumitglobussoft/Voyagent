@@ -1,17 +1,3 @@
-/**
- * Email-code sign-in via `useSignIn()` from @clerk/clerk-expo.
- *
- * Two-step flow:
- *   1. User enters email. We call `signIn.create({ identifier })` then
- *      `prepareFirstFactor({ strategy: "email_code" })`.
- *   2. User enters the 6-digit code from their inbox. We call
- *      `attemptFirstFactor({ strategy: "email_code", code })` and, on
- *      success, `setActive({ session })` to activate the session.
- *
- * Clerk handles token rotation and the Keychain write via the tokenCache
- * we plumbed in `_layout.tsx`.
- */
-import { useSignIn } from "@clerk/clerk-expo";
 import { Link, useRouter } from "expo-router";
 import { useState, type ReactElement } from "react";
 import {
@@ -22,33 +8,31 @@ import {
   View,
 } from "react-native";
 
+import { useAuth } from "../lib/auth";
+
 export default function SignInScreen(): ReactElement {
-  const { signIn, setActive, isLoaded } = useSignIn();
+  const { signIn } = useAuth();
   const router = useRouter();
 
   const [email, setEmail] = useState("");
-  const [code, setCode] = useState("");
-  const [stage, setStage] = useState<"email" | "code">("email");
+  const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const submitEmail = async (): Promise<void> => {
-    if (!isLoaded) return;
+  const submit = async (): Promise<void> => {
     setBusy(true);
     setErr(null);
     try {
-      await signIn.create({ identifier: email });
-      const emailFactor = signIn.supportedFirstFactors?.find(
-        (f) => f.strategy === "email_code",
-      );
-      if (!emailFactor || emailFactor.strategy !== "email_code") {
-        throw new Error("Email-code sign-in isn't enabled on this instance.");
+      const result = await signIn({ email: email.trim(), password });
+      if (result) {
+        if (result.error === "invalid_credentials") {
+          setErr("Email or password is incorrect.");
+        } else {
+          setErr("Something went wrong. Please try again.");
+        }
+        return;
       }
-      await signIn.prepareFirstFactor({
-        strategy: "email_code",
-        emailAddressId: emailFactor.emailAddressId,
-      });
-      setStage("code");
+      router.replace("/chat");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -56,88 +40,45 @@ export default function SignInScreen(): ReactElement {
     }
   };
 
-  const submitCode = async (): Promise<void> => {
-    if (!isLoaded) return;
-    setBusy(true);
-    setErr(null);
-    try {
-      const attempt = await signIn.attemptFirstFactor({
-        strategy: "email_code",
-        code,
-      });
-      if (attempt.status === "complete") {
-        await setActive({ session: attempt.createdSessionId });
-        router.replace("/");
-      } else {
-        setErr(`Unexpected status: ${attempt.status}`);
-      }
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
+  const canSubmit = email.length > 0 && password.length > 0 && !busy;
 
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Sign in to Voyagent</Text>
-      {stage === "email" ? (
-        <>
-          <TextInput
-            style={styles.input}
-            placeholder="you@agency.com"
-            value={email}
-            onChangeText={setEmail}
-            autoCapitalize="none"
-            keyboardType="email-address"
-            accessibilityLabel="Email address"
-            accessibilityHint="Enter the email you sign in with"
-            editable={!busy}
-          />
-          <Pressable
-            style={[styles.button, busy && styles.buttonDisabled]}
-            onPress={() => {
-              void submitEmail();
-            }}
-            disabled={busy || email.length === 0}
-            accessibilityRole="button"
-            accessibilityLabel="Send sign-in code"
-          >
-            <Text style={styles.buttonText}>
-              {busy ? "Sending..." : "Send code"}
-            </Text>
-          </Pressable>
-        </>
-      ) : (
-        <>
-          <Text style={styles.body}>
-            We sent a 6-digit code to {email}. Enter it below.
-          </Text>
-          <TextInput
-            style={styles.input}
-            placeholder="123456"
-            value={code}
-            onChangeText={setCode}
-            keyboardType="number-pad"
-            accessibilityLabel="Verification code"
-            accessibilityHint="Enter the 6-digit code from your email"
-            editable={!busy}
-          />
-          <Pressable
-            style={[styles.button, busy && styles.buttonDisabled]}
-            onPress={() => {
-              void submitCode();
-            }}
-            disabled={busy || code.length === 0}
-            accessibilityRole="button"
-            accessibilityLabel="Verify code"
-          >
-            <Text style={styles.buttonText}>
-              {busy ? "Verifying..." : "Verify"}
-            </Text>
-          </Pressable>
-        </>
-      )}
+      <TextInput
+        style={styles.input}
+        placeholder="you@agency.com"
+        value={email}
+        onChangeText={setEmail}
+        autoCapitalize="none"
+        autoCorrect={false}
+        keyboardType="email-address"
+        accessibilityLabel="Email address"
+        editable={!busy}
+      />
+      <TextInput
+        style={styles.input}
+        placeholder="Password"
+        value={password}
+        onChangeText={setPassword}
+        secureTextEntry
+        autoCapitalize="none"
+        accessibilityLabel="Password"
+        editable={!busy}
+      />
+      <Pressable
+        style={[styles.button, !canSubmit && styles.buttonDisabled]}
+        onPress={() => {
+          void submit();
+        }}
+        disabled={!canSubmit}
+        accessibilityRole="button"
+        accessibilityLabel="Sign in"
+      >
+        <Text style={styles.buttonText}>
+          {busy ? "Signing in..." : "Sign in"}
+        </Text>
+      </Pressable>
       {err !== null ? (
         <Text style={styles.error} accessibilityLiveRegion="polite">
           {err}
@@ -162,12 +103,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#111",
     marginBottom: 16,
-  },
-  body: {
-    fontSize: 13,
-    color: "#555",
-    marginBottom: 12,
-    lineHeight: 18,
   },
   input: {
     height: 44,

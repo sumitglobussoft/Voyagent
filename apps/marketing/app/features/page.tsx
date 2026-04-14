@@ -166,9 +166,9 @@ const DELIVERY = [
     icon: RefreshCcw,
   },
   {
-    title: "Resilient by default",
+    title: "In-process agent loop",
     description:
-      "Durable workflows via Temporal for long-running tool calls (visa portals, BSP parsing, reconciliations).",
+      "Real-time agent streaming from an in-process loop in services/agent_runtime — tool calls and progress land in the chat as they happen, no workflow-engine hop.",
     icon: Check,
   },
 ];

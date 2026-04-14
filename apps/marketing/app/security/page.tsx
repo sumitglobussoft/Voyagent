@@ -14,7 +14,7 @@ export const metadata: Metadata = {
 const SECTIONS = [
   {
     title: "Authentication",
-    body: "Clerk-issued JWTs verified with RS256 via JWKS. A short-lived access token on every request; refresh happens at the edge, never the driver layer. Token revocation flags are wired through so an admin can sever a session without waiting for natural expiry.",
+    body: "In-house email + password auth with argon2id password hashing, short-lived HS256 access JWTs, and hashed refresh tokens persisted in Postgres. Sessions live in httpOnly cookies; refresh happens at the edge, never the driver layer. An admin can revoke a session immediately via a Redis-backed JWT denylist — no waiting for natural expiry.",
   },
   {
     title: "Multi-tenancy",

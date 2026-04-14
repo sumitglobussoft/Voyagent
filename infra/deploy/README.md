@@ -70,9 +70,11 @@ You **must** fill in:
 - `POSTGRES_PASSWORD` — a strong random string.
 - `VOYAGENT_KMS_KEY` — generate with
   `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
-- Any provider credentials you actually want live (Anthropic, Clerk,
-  Amadeus, Tally, etc.). Anything left blank simply disables that
-  integration.
+- `VOYAGENT_AUTH_SECRET` — HS256 signing secret for access JWTs issued
+  by the in-house auth service at `/api/auth/*`. Generate with
+  `python -c "import secrets; print(secrets.token_urlsafe(64))"`.
+- Any provider credentials you actually want live (Anthropic, Amadeus,
+  Tally, etc.). Anything left blank simply disables that integration.
 
 `deploy.sh` rejects the file if `change-me` survives in a required key.
 
@@ -247,14 +249,14 @@ scp -r empcloud-development@voyagent.globusdemos.com:/opt/voyagent/test-results/
 
 ### Baseline expectation (live + e2e)
 
-Until real `ANTHROPIC_API_KEY` and `CLERK_SECRET_KEY` land in
-`/opt/voyagent/.env.prod`, the `tests/live` and `tests/e2e` suites pin
-the **error contract**: the chat surface must return `401`/`403`/`503`
-(depending on which secret is missing), **not** a successful turn. This
-is intentional. The tests still pass under that contract — they're
-proving the stack fails *correctly*. Once real keys are wired in, the
-same suites flip to asserting a successful conversational turn without
-any test-code changes.
+Until a real `ANTHROPIC_API_KEY` lands in `/opt/voyagent/.env.prod`,
+the `tests/live` and `tests/e2e` suites pin the **error contract**:
+unauthenticated chat calls return `401`/`403`, and authenticated calls
+return `503` when the model backend is not configured — **not** a
+successful turn. This is intentional. The tests still pass under that
+contract — they're proving the stack fails *correctly*. Once a real
+key is wired in, the same suites flip to asserting a successful
+conversational turn without any test-code changes.
 
 ## Known limitations
 

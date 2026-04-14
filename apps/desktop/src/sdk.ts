@@ -20,11 +20,11 @@ export const tenantId = readEnv("VITE_VOYAGENT_TENANT_ID", "dev-tenant");
 export const actorId = readEnv("VITE_VOYAGENT_ACTOR_ID", "dev-user");
 
 /**
- * Build a `VoyagentClient` wired to the current Clerk session.
+ * Build a `VoyagentClient` wired to the current Voyagent auth session.
  *
- * This must run inside a component that sits under `<AuthProvider>`. The
+ * Must run inside a component that sits under `<AuthProvider>`. The
  * `authToken` option accepts an async getter so the SDK reads a fresh
- * session JWT on every API call — same contract the web app uses.
+ * access token (auto-refreshed if expired) on every API call.
  */
 export function useVoyagentClient(): VoyagentClient {
   const { getToken } = useAuth();
@@ -36,7 +36,7 @@ export function useVoyagentClient(): VoyagentClient {
           const token = await getToken();
           if (!token) {
             throw new Error(
-              "Voyagent desktop: no Clerk session token available — user is signed out.",
+              "Voyagent desktop: no access token available — user is signed out.",
             );
           }
           return token;

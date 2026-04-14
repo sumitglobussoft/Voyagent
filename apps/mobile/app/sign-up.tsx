@@ -1,12 +1,3 @@
-/**
- * Email-code sign-up via `useSignUp()` from @clerk/clerk-expo.
- *
- * Same two-step shape as sign-in — email first, then verify the code
- * delivered to the inbox. On verification success we call
- * `setActive({ session: createdSessionId })` which activates the new
- * session and `SignedIn>` starts rendering the authed tabs.
- */
-import { useSignUp } from "@clerk/clerk-expo";
 import { Link, useRouter } from "expo-router";
 import { useState, type ReactElement } from "react";
 import {
@@ -17,24 +8,38 @@ import {
   View,
 } from "react-native";
 
+import { useAuth } from "../lib/auth";
+
 export default function SignUpScreen(): ReactElement {
-  const { signUp, setActive, isLoaded } = useSignUp();
+  const { signUp } = useAuth();
   const router = useRouter();
 
   const [email, setEmail] = useState("");
-  const [code, setCode] = useState("");
-  const [stage, setStage] = useState<"email" | "code">("email");
+  const [password, setPassword] = useState("");
+  const [fullName, setFullName] = useState("");
+  const [agencyName, setAgencyName] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const startSignUp = async (): Promise<void> => {
-    if (!isLoaded) return;
+  const submit = async (): Promise<void> => {
     setBusy(true);
     setErr(null);
     try {
-      await signUp.create({ emailAddress: email });
-      await signUp.prepareEmailAddressVerification({ strategy: "email_code" });
-      setStage("code");
+      const result = await signUp({
+        email: email.trim(),
+        password,
+        full_name: fullName.trim(),
+        agency_name: agencyName.trim(),
+      });
+      if (result) {
+        setErr(
+          result.error === "request_failed"
+            ? "Something went wrong. Please try again."
+            : result.error,
+        );
+        return;
+      }
+      router.replace("/chat");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -42,83 +47,66 @@ export default function SignUpScreen(): ReactElement {
     }
   };
 
-  const verify = async (): Promise<void> => {
-    if (!isLoaded) return;
-    setBusy(true);
-    setErr(null);
-    try {
-      const attempt = await signUp.attemptEmailAddressVerification({ code });
-      if (attempt.status === "complete") {
-        await setActive({ session: attempt.createdSessionId });
-        router.replace("/");
-      } else {
-        setErr(`Unexpected status: ${attempt.status}`);
-      }
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
+  const canSubmit =
+    email.length > 0 &&
+    password.length > 0 &&
+    fullName.length > 0 &&
+    agencyName.length > 0 &&
+    !busy;
 
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Create a Voyagent account</Text>
-      {stage === "email" ? (
-        <>
-          <TextInput
-            style={styles.input}
-            placeholder="you@agency.com"
-            value={email}
-            onChangeText={setEmail}
-            autoCapitalize="none"
-            keyboardType="email-address"
-            accessibilityLabel="Email address"
-            accessibilityHint="Enter the email address to register"
-            editable={!busy}
-          />
-          <Pressable
-            style={[styles.button, busy && styles.buttonDisabled]}
-            onPress={() => {
-              void startSignUp();
-            }}
-            disabled={busy || email.length === 0}
-            accessibilityRole="button"
-            accessibilityLabel="Create account"
-          >
-            <Text style={styles.buttonText}>
-              {busy ? "Sending..." : "Send verification code"}
-            </Text>
-          </Pressable>
-        </>
-      ) : (
-        <>
-          <Text style={styles.body}>Enter the code sent to {email}.</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="123456"
-            value={code}
-            onChangeText={setCode}
-            keyboardType="number-pad"
-            accessibilityLabel="Verification code"
-            accessibilityHint="Enter the 6-digit code from your email"
-            editable={!busy}
-          />
-          <Pressable
-            style={[styles.button, busy && styles.buttonDisabled]}
-            onPress={() => {
-              void verify();
-            }}
-            disabled={busy || code.length === 0}
-            accessibilityRole="button"
-            accessibilityLabel="Verify code"
-          >
-            <Text style={styles.buttonText}>
-              {busy ? "Verifying..." : "Verify"}
-            </Text>
-          </Pressable>
-        </>
-      )}
+      <TextInput
+        style={styles.input}
+        placeholder="Full name"
+        value={fullName}
+        onChangeText={setFullName}
+        accessibilityLabel="Full name"
+        editable={!busy}
+      />
+      <TextInput
+        style={styles.input}
+        placeholder="Agency name"
+        value={agencyName}
+        onChangeText={setAgencyName}
+        accessibilityLabel="Agency name"
+        editable={!busy}
+      />
+      <TextInput
+        style={styles.input}
+        placeholder="you@agency.com"
+        value={email}
+        onChangeText={setEmail}
+        autoCapitalize="none"
+        autoCorrect={false}
+        keyboardType="email-address"
+        accessibilityLabel="Email address"
+        editable={!busy}
+      />
+      <TextInput
+        style={styles.input}
+        placeholder="Password"
+        value={password}
+        onChangeText={setPassword}
+        secureTextEntry
+        autoCapitalize="none"
+        accessibilityLabel="Password"
+        editable={!busy}
+      />
+      <Pressable
+        style={[styles.button, !canSubmit && styles.buttonDisabled]}
+        onPress={() => {
+          void submit();
+        }}
+        disabled={!canSubmit}
+        accessibilityRole="button"
+        accessibilityLabel="Create account"
+      >
+        <Text style={styles.buttonText}>
+          {busy ? "Creating..." : "Create account"}
+        </Text>
+      </Pressable>
       {err !== null ? (
         <Text style={styles.error} accessibilityLiveRegion="polite">
           {err}
@@ -143,12 +131,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#111",
     marginBottom: 16,
-  },
-  body: {
-    fontSize: 13,
-    color: "#555",
-    marginBottom: 12,
-    lineHeight: 18,
   },
   input: {
     height: 44,

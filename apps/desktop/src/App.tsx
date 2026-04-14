@@ -24,9 +24,8 @@ const TABS: readonly TabDef[] = [
  * Top-level desktop shell. A three-tab layout (Chat / Reports / Settings)
  * where only Chat is wired — Reports and Settings are placeholders.
  *
- * Auth: `<AuthProvider>` holds the Clerk client. Until the user has a
- * session the shell renders `<SignInScreen>` instead of the chrome. The
- * deep-link redirect back from Clerk's hosted UI triggers a re-render.
+ * Auth: `<AuthProvider>` holds the Voyagent auth client. Until the user
+ * has a session the shell renders `<SignInScreen>` instead of the chrome.
  */
 export function App(): ReactElement {
   return (

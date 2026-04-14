@@ -185,7 +185,7 @@ Revisit when a clear customer pull exists.
 ## D9 — Tech stack: TypeScript frontends + Python agent/driver runtime
 
 **Date:** 2026-04-14
-**Status:** Accepted
+**Status:** Accepted (partially superseded by [D11](#d11--v0-ships-with-in-process-agent-orchestration-no-temporal) — the Temporal pick below is deferred; v0 ships with in-process orchestration instead)
 
 **Context.** We needed a stack that maximizes code sharing across web / desktop / mobile, gives us the strongest ecosystem for the integration-heavy driver layer, and keeps the canonical domain model single-sourced across languages.
 
@@ -203,7 +203,7 @@ Revisit when a clear customer pull exists.
 - **Canonical model:** Pydantic v2 — the single source of truth; emits JSON Schema consumed by TS via `openapi-typescript` into `@voyagent/core`.
 - **Agent loop:** Anthropic Python SDK with prompt caching enabled from day one.
 - **Browser automation:** Playwright (Python) — first-class for visa/portal drivers.
-- **Long-running workflows:** Temporal — visa tracking, BSP reconciliation, async driver retries.
+- **Long-running workflows:** *(Originally Temporal; superseded by [D11](#d11--v0-ships-with-in-process-agent-orchestration-no-temporal) — v0 runs everything in-process in `services/agent_runtime` and streams to clients over FastAPI SSE. A durable engine will be picked when a real use case forces the issue.)*
 - **Data:** PostgreSQL + Redis + S3-compatible object store.
 
 **Drivers — primarily Python.** Desktop-bound drivers (Tally ODBC, smart-card readers, local printers) run as a local Python sidecar launched by the Tauri desktop app over a local socket.
@@ -213,13 +213,13 @@ Revisit when a clear customer pull exists.
 - *Electron instead of Tauri.* More examples, bigger ecosystem, but 10× binary and higher memory footprint matter for a desktop power-user tool.
 - *Flutter for all three clients.* Weaker web and agentic-chat UI ecosystem; code-sharing story with web-specific payment/auth SDKs is poor.
 - *.NET MAUI / WinUI.* Would be sensible if Windows-only and Tally-first. We're neither — cross-platform desktop matters for global expansion.
-- *Inngest / Hatchet instead of Temporal.* Lighter ops, smaller. Acceptable substitutes; not a day-one decision.
+- *Inngest / Hatchet instead of Temporal.* Lighter ops, smaller. Acceptable substitutes; not a day-one decision. (Moot in v0 — see [D11](#d11--v0-ships-with-in-process-agent-orchestration-no-temporal).)
 
 **Consequences.**
 - Two-language stack → higher hiring bar, context-switch tax. Accepted for the ecosystem payoff.
 - Pydantic → TS generation has edge cases (unions, discriminated types); `@voyagent/core` carries a thin hand-written adapter layer for the tricky bits.
 - Tauri's ecosystem is smaller than Electron's — weird native deps may require writing Rust plugins. Acceptable cost.
-- Temporal adds ops complexity early; if it bites, Inngest/Hatchet are drop-in-ish replacements.
+- ~~Temporal adds ops complexity early; if it bites, Inngest/Hatchet are drop-in-ish replacements.~~ Resolved differently: v0 ships with no durable workflow engine at all. See [D11](#d11--v0-ships-with-in-process-agent-orchestration-no-temporal).
 
 **Follow-ups.**
 - See [STACK.md](./STACK.md) for concrete repo layout, package names, entry points, build tooling, and the Pydantic → TS contract flow.
@@ -273,6 +273,32 @@ Revisit when a clear customer pull exists.
 - Wire `schemas/canonical` into `pyproject.toml` as a workspace member when we leave planning.
 - Add the CI linter that rejects `inr`/`gst`/`aadhaar`/`pan`/`pincode` token leakage in non-India-driver code paths (see [D8](#d8--india-first-go-to-market-global-ready-architecture)).
 - Write unit tests for the invariants (money-with-float rejection, journal balancing, period ordering, passport date ordering) before the first driver lands.
+
+---
+
+## D11 — v0 ships with in-process agent orchestration, no Temporal
+
+**Date:** 2026-04-14
+**Status:** Accepted (supersedes the workflow-engine portion of [D9](#d9--tech-stack-typescript-frontends--python-agentdriver-runtime))
+
+**Context.** [D9](#d9--tech-stack-typescript-frontends--python-agentdriver-runtime) picked Temporal as the long-running workflow engine for visa tracking, BSP reconciliation, and async driver retries. In practice, none of those use cases exist yet — v0 is a single vertical slice (flight enquiry → quote → ticket → invoice → BSP reconciliation) and the agent loop runs front-to-back inside a single request. Standing up a Temporal cluster (or paying for Temporal Cloud) to orchestrate a synchronous chat turn is pure ceremony.
+
+**Decision.** v0 ships with no durable workflow engine. The agent runtime is an in-process Python loop in `services/agent_runtime`, invoked from `services/api` and streamed to web / desktop / mobile clients over FastAPI SSE. `services/worker/` stays as an empty skeleton folder reserved for the future; no `temporalio` dependency, no worker process, no Temporal server in `infra/docker/dev.yml`.
+
+**Alternatives considered.**
+- *Keep Temporal from day one.* Rejected — the critical path is synchronous, no retries or durable timers are needed yet, and the ops cost (server, UI, workers, client SDK, schema migrations) buys nothing v0 can't do with a function call.
+- *Inngest / Hatchet as a lighter substitute.* Same argument. Cheaper, but "cheaper ceremony" is still ceremony.
+- *Celery / RQ / ARQ for simple background jobs.* Deferred — we don't even have background jobs yet. When we do, we'll pick one, and it may or may not be the same thing we pick for durable agent workflows.
+
+**Consequences.**
+- Keeps the v0 critical path synchronous until we hit a real need for durable workflows — the explicit rationale for this decision.
+- A long-running tool call blocks the SSE stream it's on; acceptable at v0 where tools are fast (driver stubs, canonical model validation, LLM turns). Not acceptable for real visa tracking or BSP reconciliation, which is exactly when we'll revisit.
+- Trigger conditions to re-open this decision: (a) the first tool that legitimately needs to run for minutes-to-days (visa status polling, BSP settlement windows), (b) the first retry/backoff policy that can't be expressed in a single request, (c) the first workflow that must survive a process restart.
+- When we re-open, Temporal, Inngest, and Hatchet are all still live candidates — this ADR is a deferral, not a rejection.
+
+**Follow-ups.**
+- Remove any lingering Temporal references from docs, READMEs, and compose files as part of this pass. (Done alongside this ADR.)
+- When the first durable use case arrives, spin a fresh ADR (D<N>) that picks one and documents the migration path from the in-process loop.
 
 ---
 

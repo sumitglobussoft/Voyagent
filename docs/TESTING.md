@@ -33,20 +33,19 @@ the inner nginx — bypassing Cloudflare for speed and reliability.
 
 The failures cluster in test files authored by the latest security /
 data-quality agents; the production code paths they test are sound, but
-the **test-side fixtures have contract drift** with the implementation:
+the **test-side fixtures have contract drift** with the implementation.
+The `tests/api/test_webhooks.py` module has since been retired along
+with the external-provider webhook surface it covered.
 
 | Module | Failures | Root cause |
 |---|---|---|
-| `tests/api/test_auth.py` | 6 | JWT fixture expects Clerk JWKS shape that doesn't match the new RS256 verifier |
+| `tests/api/test_auth.py` | 6 | JWT fixtures predate the in-house HS256 verifier contract |
 | `tests/api/test_revocation.py` | 4 | Redis revocation fail-open test doesn't match the actual module API |
-| `tests/api/test_webhooks.py` | 3 | Svix signature generation in tests doesn't match `verify_token` expectations |
 | `tests/api/test_chat.py::test_runtime_unavailable_returns_503` | 1 | Auth dependency now fires before the runtime check |
 | `tests/agent_runtime/test_tools.py` | 3 | `approval_required` gate added RBAC short-circuit with new `ToolInvocationOutcome.kind="permission_denied"` |
 | `tests/agent_runtime/test_ticketing_visa.py` | 2 | `issue_ticket` tool gate + RBAC combination |
 | `tests/agent_runtime/test_accounting_tools.py` | 1 | `post_journal_entry` approval flow changed shape |
 | `tests/drivers/amadeus/test_mapping.py` | 1 | Airport-timezone fallback WARNING assertion looks for an older log message |
-| Other `tests/api/test_webhooks.py` parameter branches | remaining | Same Svix fixture issue |
-
 **None of the failures indicate a runtime bug in the deployed stack.** They
 are test-side contract drift from parallel agent work that can be fixed in
 a follow-up pass without touching the production code.
@@ -77,7 +76,7 @@ Every live HTTP probe against the deployed stack passes:
 - `/api/schemas/money` — 200 with valid JSON Schema
 - `/api/openapi.json` — 200 OpenAPI 3.1 with chat paths
 - `/api/chat/*` — 401/403/503 as documented (pre-credentials baseline)
-- `/app` and `/app/dashboard` — 3xx / 404 as Clerk-gated
+- `/app` and `/app/dashboard` — 3xx / 404 as gated by the in-house middleware redirect to `/sign-in`
 - `/api/health` < 3s, landing < 15s performance budgets — pass
 - CORS preflight contract — pass
 
@@ -124,11 +123,13 @@ The **86 passing** Playwright tests cover:
 
 ## Known gaps the tests intentionally DO NOT cover (v0)
 
-- Real authenticated Clerk sign-in flow (requires production Clerk keys).
+- Real authenticated sign-in flow end-to-end from the web UI (unit
+  tests cover `/api/auth/*` directly; browser-driven login is pending).
 - Real agent chat turn with streaming (requires `ANTHROPIC_API_KEY` +
   Amadeus sandbox credentials).
 - SSE reconnect-on-drop with `Last-Event-ID` (needs a real turn first).
-- Multi-tenant cross-check (requires two real Clerk orgs).
+- Multi-tenant cross-check (requires two seeded tenants via
+  `POST /api/auth/sign-up`).
 - Load / fuzz / schemathesis sweeps.
 - Visual regression / screenshot diffing.
 - Cloudflare-edge-level tests (tests intentionally hit in-network).
@@ -151,11 +152,10 @@ scp -r empcloud-development@voyagent.globusdemos.com:/opt/voyagent/test-results/
 ## Follow-ups
 
 1. **Fix the 37 `py-unit` failures.** They are contract drift in the
-   test fixtures written by the parallel security/data-quality/webhooks
+   test fixtures written by the parallel security / data-quality
    agents. A focused pass on `tests/api/test_auth.py`,
-   `test_webhooks.py`, `test_revocation.py`, and the approval-gating
-   cases in `tests/agent_runtime/**` clears them without touching the
-   runtime.
+   `test_revocation.py`, and the approval-gating cases in
+   `tests/agent_runtime/**` clears them without touching the runtime.
 2. **Fix the 6 `e2e` failures.** Selector stability on `ContactForm`
    and the `app-gated` status tolerance.
 3. **Add a real chat-turn smoke test** once real credentials are

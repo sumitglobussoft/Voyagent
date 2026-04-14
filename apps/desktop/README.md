@@ -45,7 +45,8 @@ Copy `.env.example` to `.env` and adjust:
 
 - `VITE_VOYAGENT_API_URL` — the Voyagent FastAPI backend.
 - `VITE_VOYAGENT_TENANT_ID`, `VITE_VOYAGENT_ACTOR_ID` — dev-time session
-  identity. These go away once Clerk auth is wired in (see below).
+  identity. The API derives both from the JWT; these are only used as
+  props by the chat component in local dev.
 
 Vite inlines any `VITE_*` variable at build time. Rust-side secrets must
 not be put here; put them in Tauri's runtime config instead.
@@ -59,7 +60,7 @@ The shell today has three tabs:
 - **Reports** — placeholder. Will surface Tally-backed receivables,
   payables, and itinerary summaries once the local Tally sidecar ships.
 - **Settings** — placeholder. Preferences, driver configuration, and
-  account management land here alongside Clerk auth.
+  account management land here.
 
 ## Local driver bridge
 
@@ -84,27 +85,33 @@ runtime. Keep this boundary clean — do not import Tauri APIs from inside
 
 ## Auth
 
-Clerk is wired via `@clerk/clerk-js` + a Tauri deep link.
+The desktop shell uses Voyagent's in-house cookie/JWT auth. Desktop has
+no HttpOnly cookies, so the access + refresh tokens live in a secure
+local JSON blob written by the Rust side.
 
-- `src/auth/ClerkClient.ts` — the JS SDK wrapper; drives sign-in via
-  `@tauri-apps/plugin-shell.open` on a Clerk-hosted URL.
-- `src/auth/DeepLinkHandler.tsx` — listens for `voyagent://auth/callback`
-  and forwards the captured session to `ClerkClient.applySession`.
+- `src/auth/VoyagentAuthClient.ts` — typed client over
+  `/api/auth/sign-up`, `/api/auth/sign-in`, `/api/auth/me`,
+  `/api/auth/refresh`, `/api/auth/sign-out`. Exposes `getAccessToken()`
+  which transparently refreshes using the stored refresh token when the
+  access JWT is close to expiry or rejected with 401.
 - `src/auth/tokenStore.ts` — typed wrapper over the Rust-side
-  `auth_store_token` / `auth_load_token` / `auth_clear_token` commands,
-  which persist the session JWT under the app's local data directory
-  (permissions tightened to 0600 on POSIX).
+  `voyagent_store_session` / `voyagent_load_session` /
+  `voyagent_clear_session` commands, which persist the session blob
+  under the app's local data directory (permissions tightened to 0600
+  on POSIX; ACL-protected AppData\\Local on Windows).
 - `src/auth/AuthProvider.tsx` — React context; rehydrates the stored
-  token on mount and exposes `getToken`, `signIn`, `signOut`.
+  session on mount and exposes `getToken`, `signIn`, `signUp`,
+  `signOut`.
+- `src/auth/SignInScreen.tsx` — plain email/password form, with a
+  toggle to the sign-up variant (email, password, full name, agency
+  name).
 
-On first launch `<SignInScreen>` renders until the user completes the
-hosted flow; `src/sdk.ts` builds the `VoyagentClient` with an
-`authToken` getter that pulls a fresh JWT via `clerk.session.getToken()`
-on every API call.
+`src/sdk.ts` builds the `VoyagentClient` with an `authToken` getter
+that pulls a fresh JWT via `VoyagentAuthClient.getAccessToken()` on
+every API call.
 
 Environment — copy `.env.example` to `.env` and set
-`VITE_CLERK_PUBLISHABLE_KEY`. Register `voyagent://auth/callback` as an
-allowed redirect URL in the Clerk dashboard for the desktop instance.
+`VITE_VOYAGENT_API_URL` to the Voyagent FastAPI base URL.
 
 ## Production build
 
@@ -150,8 +157,6 @@ command on mount (throttled once per 24 h). Before shipping:
 
 ## Known limitations
 
-- Clerk refresh-token rotation on desktop relies on the Clerk JS SDK's
-  built-in session refresh; no independent refresh-token store.
 - No biometric unlock gate before reading the stored session token.
 - No Tally or GDS driver yet; `local_driver_invoke` is a stub.
 - Icon bundle (`src-tauri/icons/`) placeholder — run

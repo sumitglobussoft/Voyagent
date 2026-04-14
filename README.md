@@ -3,217 +3,148 @@
 **The Agentic Travel OS.**
 *One chat. Every GDS, every accounting system, every workflow.*
 
-> **Status:** Planning phase, scaffolding landed. The product vision, architecture, and canonical model v0 are in place, and the monorepo skeleton (pnpm + uv workspaces, Next.js web stub, FastAPI service stub, local dev docker compose, CI) is scaffolded and ready to bootstrap with `pnpm install && uv sync`. Driver *contracts* are defined under [`drivers/_contracts/`](./drivers/_contracts/); concrete drivers (Amadeus, Tally, BSP India, ...) are the next step. See [docs/](./docs/) for planning material.
+## What this is
 
----
+Voyagent is an agentic operating system for travel agencies. It replaces the manual, repetitive, multi-tool workflows that agency staff perform every day — ticketing, visa processing, hotel and holiday packaging, accounting, BSP reconciliation, GST/TDS compliance — with a chat interface backed by domain agents that actually execute the work through per-vendor drivers. The first market is India (BSP India, GST, TDS, UPI, Tally dominance, DPDP Act), but the architecture is globalization-safe from day one: currency, tax, statutory filings, identity documents, payment rails, and data residency are all abstracted. See [docs/DECISIONS.md](./docs/DECISIONS.md) (D8) for the rationale.
 
-## 1. What is Voyagent?
+## Status
 
-Voyagent is an agentic operating system for travel agencies. It replaces the manual, repetitive, multi-tool workflows that travel agency staff perform every day — ticketing, visa processing, hotel & holiday packaging, accounting, BSP reconciliation, GST/TDS compliance — with an intelligent **chat interface backed by specialized AI agents** that actually do the work end to end.
+v0 alpha, live at [voyagent.globusdemos.com](https://voyagent.globusdemos.com). In-house auth, chat sessions, and the streaming agent loop are working end to end against a real Anthropic backend. Reports and the hotels domain are scaffolded. Driver implementations are at the skeleton stage pending real vendor credentials — see the table below for what is wired today.
 
-Think of it as "Claude Code, but for a travel company." The employee types or speaks what they need (*"Quote a Dubai 4-night package for 2 adults on the 22nd with Emirates direct, 4-star near Downtown"*) and the system drives the full workflow across whatever GDS, hotel bank, payment gateway, visa portal, and accounting software the agency happens to use.
+## Architecture at a glance
 
-## 2. The problem we are solving
+| Layer          | Choice                                                                                |
+| -------------- | ------------------------------------------------------------------------------------- |
+| Frontends      | Next.js 15 web app, Next.js marketing site, Tauri 2 desktop (skeleton), Expo mobile (skeleton) |
+| Backend        | Python 3.12, FastAPI, Pydantic v2, Anthropic SDK with prompt caching                  |
+| Agent runtime  | In-process orchestrator + domain agents in `services/agent_runtime`, streamed to clients over FastAPI SSE. No external workflow engine. |
+| Data           | Postgres 16 (SQLAlchemy 2 async + Alembic), Redis 7 for JWT revocation + pub/sub      |
+| Auth           | In-house: Argon2id passwords, HS256 access JWTs, opaque rotating refresh tokens       |
+| Build          | pnpm workspaces + uv workspace in a single monorepo                                   |
 
-A travel agency today juggles:
+Deeper references live in [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md), [docs/STACK.md](./docs/STACK.md), and [docs/DECISIONS.md](./docs/DECISIONS.md) — in particular D9 (tech stack) and D11 (in-process agent runtime). Note two deliberate removals from the earlier plan: Clerk has been replaced with in-house auth (Argon2id + HS256 JWT + rotating refresh tokens, Redis-backed revocation), and Temporal has been dropped from v0. Long-running tool calls run inside the same agent loop that streams to the client; durability will be re-evaluated when workflow latency exceeds what SSE + resumable sessions can handle.
 
-- **Multiple GDSes** (Amadeus, Sabre, Galileo/Travelport) plus consolidator portals (TBO, Riya, etc.) and direct airline/NDC feeds.
-- **Multiple hotel / land-package sources** (Hotelbeds, TBO Hotels, direct contracts).
-- **Multiple visa portals** (VFS Global, BLS, embassy/consulate sites — many without APIs).
-- **Multiple payment rails** (UPI, NEFT/RTGS, card, payment links, BSP).
-- **Multiple accounting stacks** (Tally, Zoho Books, Busy, QuickBooks, SAP, Marg, custom ERPs).
-- **Manual reconciliation** against BSP statements, card statements, bank statements, supplier statements.
-- **Statutory workload** (GST filings, TDS, PF/ESI, annual returns, audits).
+The canonical domain model lives in `schemas/canonical/` (Pydantic v2) and is the single shape every agent, tool, and driver speaks. Drivers live under `drivers/` and each declares a capability manifest — the orchestrator picks drivers per tenant at runtime based on what they can actually do, and degrades gracefully when a capability is missing.
 
-Staff switch between 8–15 tools a day, copy-paste data, and re-key the same passenger, fare, and invoice information into each one. The work is **well-defined, rule-heavy, and highly repeatable** — ideal territory for agents.
-
-## 3. Product scope
-
-Voyagent replaces ops across **three functional domains**, drawn from the actual activity inventory of a working travel agency. The full verbatim activity list is in [docs/ACTIVITIES.md](./docs/ACTIVITIES.md).
-
-### 3.1 Ticketing & Visa
-Enquiry intake → passport/visa eligibility checks → document checklist generation → fare search across GDS/consolidators → quotation → booking/PNR → ticket issuance → visa form filling, appointment, biometrics, tracking → web check-in → schedule-change handling → cancellation & refund.
-
-### 3.2 Hotels & Holidays
-Enquiry intake → multi-supplier hotel + transport rate gathering → package costing → quotation → revisions → booking confirmation → voucher issuance → post-booking support. Covers FIT hotels, land arrangements, tours, Umrah land packages, and custom holiday building for any destination.
-
-### 3.3 Accounting & Finance
-Invoicing, collections (UPI/card/bank/cash/payment links), supplier payments (NEFT/RTGS/cheque/card), ledger entries, commission tracking, incentive billings, BSP reconciliation, ADM/ACM handling, card & bank reconciliation, chargebacks, GST computation & filing, TDS deduction & return filing, payroll statutory deductions, audit-ready books, and management reporting (sales / outstanding / profit per booking).
-
-### 3.4 Three capability tiers (applies across all domains)
-1. **Identify & Collect** — structured intake of requirements and documents via chat.
-2. **Verify** — rule-based + LLM verification (passport validity, document completeness, fare legality, reconciliation matches).
-3. **Act** — side-effecting tools that actually issue tickets, post journal entries, submit visa applications, send payments. All irreversible actions are gated behind explicit human confirmation.
-
-## 4. Hard requirements
-
-These are non-negotiable and shape every architectural decision:
-
-- **GDS-agnostic.** Must work with every GDS and fare source in the market — not pick one. Amadeus, Sabre, Galileo/Travelport, TBO, Riya, consolidator XML feeds, airline NDC, LCC aggregators, and whatever comes next.
-- **Accounting-software-agnostic.** Must work with every accounting system the agency may already use — Tally, Zoho Books, Busy, QuickBooks, SAP, Marg, custom ERPs.
-- **Full ops replacement.** Not an add-on. Not a copilot. The goal is to retire the manual, multi-tool workflow entirely.
-- **Tri-platform delivery.** Web (light users), Desktop (power users, where GDS terminals and Tally live), Mobile (reporting + remote-control of a paired desktop session).
-- **Anyone can use it.** No assumptions about team size or employee count. Single-user up to many-users-per-tenant.
-- **Auditable.** Every side-effect action is logged with actor, inputs, outputs, and approval trail.
-- **India-first, globalization-safe.** The first market is India (BSP India, GST, TDS, UPI, Tally dominance, DPDP Act). The architecture makes no India-only assumptions: currency, tax, statutory filings, addresses, phone, identity documents, payment rails, language, and data residency are all abstracted for later expansion. See [D8](./docs/DECISIONS.md#d8--india-first-go-to-market-global-ready-architecture).
-
-## 5. Architecture (6 layers)
-
-The adapter layer — not the AI — is the platform's primary engineering asset. If we get vendor-agnosticism right, onboarding a new GDS or accounting system is a driver, not a redesign.
-
-```
-┌──────────────────────────────────────────────────────────────────┐
-│  Layer 5 — Clients                                               │
-│    Web SPA  ·  Desktop (Electron/Tauri)  ·  Mobile               │
-├──────────────────────────────────────────────────────────────────┤
-│  Layer 4 — Agents                                                │
-│    Orchestrator  ·  Domain agents (ticketing_visa,               │
-│    hotels_holidays, accounting)  ·  Cross-cutting agents         │
-│    (document_verifier, reconciler, reporter)                     │
-├──────────────────────────────────────────────────────────────────┤
-│  Layer 3 — Tool Runtime                                          │
-│    Canonical tools (search_flights, issue_ticket,                │
-│    post_journal_entry, reconcile_bsp, ...) with side_effect      │
-│    and reversible flags for approval gating                      │
-├──────────────────────────────────────────────────────────────────┤
-│  Layer 2 — Driver / Adapter Layer                                │
-│    FareSearchDriver · PNRDriver · HotelDriver · VisaPortalDriver │
-│    AccountingDriver · PaymentDriver · BSPDriver · CardDriver     │
-│    MessagingDriver · ... (capability manifests per driver)       │
-├──────────────────────────────────────────────────────────────────┤
-│  Layer 1 — Canonical Domain Model                                │
-│    Enquiry, Passenger, Itinerary, Fare, PNR, Booking, VisaFile,  │
-│    Voucher, Invoice, JournalEntry, LedgerAccount, BSPReport,     │
-│    Reconciliation, ...                                           │
-├──────────────────────────────────────────────────────────────────┤
-│  Layer 0 — Platform Services                                     │
-│    Multi-tenancy · RBAC · Audit log · Approval workflows ·       │
-│    Credential vault · Observability · Billing                    │
-└──────────────────────────────────────────────────────────────────┘
-```
-
-### 5.1 Canonical Domain Model (Layer 1)
-One internal schema that every agent and tool speaks. Vendor-specific fields never leak upward. Adding a new GDS means writing a driver that maps its API to canonical `Fare` / `PNR` / `Booking` — the agents don't change.
-
-### 5.2 Driver / Adapter Layer (Layer 2)
-One driver per external system, each implementing a capability interface and declaring a **capability manifest** (what it can and cannot do). The orchestrator selects drivers at runtime based on tenant configuration and capability availability — so if a tenant's accounting software can't auto-post journal entries, Voyagent gracefully degrades to generating a Tally-importable XML file instead.
-
-### 5.3 Tool Runtime (Layer 3)
-Canonical tools dispatch to configured drivers. Each tool carries:
-- `side_effect: bool` — does it change external state?
-- `reversible: bool` — can the action be undone?
-- `approval_required: bool` — must a human confirm before execution?
-
-Irreversible side-effects (ticket issuance, payment, visa submission, journal posting) always require explicit confirmation.
-
-### 5.4 Agents (Layer 4)
-- **Orchestrator** — chat entrypoint, intent classification, routing, per-enquiry/PNR/invoice conversation memory.
-- **Domain agents** — `ticketing_visa`, `hotels_holidays`, `accounting`. Each owns its workflow state machine: *enquiry → quote → book → deliver → post-sale*.
-- **Cross-cutting agents** — `document_verifier` (OCR + rule checks on passports, finances, supporting docs), `reconciler` (BSP / card / bank / supplier matching), `reporter` (sales / outstanding / profit / GST / TDS reports).
-
-### 5.5 Clients (Layer 5)
-- **Desktop app** — heavy client. Hosts integrations that need local OS access: GDS terminal sessions (Amadeus Selling Platform, Sabre Red, Galileo Smartpoint), Tally ODBC/XML-over-HTTP, smart-card readers, local ticket/voucher printers.
-- **Web app** — thin SPA for light users. Capabilities degrade gracefully where a driver is desktop-only.
-- **Mobile app** — reports, approvals, and a remote-control relay that pairs to a desktop session over WebSocket. Desktop is the executor; mobile is the steering wheel.
-
-### 5.6 Platform Services (Layer 0)
-Multi-tenancy, RBAC (agent / senior agent / accountant / admin roles), audit log for every side-effect tool call, approval workflow engine, per-tenant credential vault for vendor credentials.
-
-## 6. Naming & positioning
-
-- **Product name:** **Voyagent**
-- **Category line:** *The Agentic Travel OS*
-- **Tagline options:**
-  - *One chat. Every GDS, every accounting system, every workflow.*
-  - *Travel ops, on autopilot.*
-
-Positioning rationale in [docs/DECISIONS.md](./docs/DECISIONS.md#naming).
-
-## 7. Known risks
-
-Ranked roughly by impact:
-
-1. **Integration surface area.** GDS, accounting, BSP, VFS, payment — this will dwarf the AI work. The adapter pattern is bet-the-company-on-it.
-2. **Browser automation for portals without APIs.** VFS Global, some embassy sites, some airline extranets. Needs a dedicated Playwright-based sub-system with retry, session handling, and CAPTCHA strategy.
-3. **Tally integration specifically.** Dominant in the Indian market, notoriously awkward interop (XML over HTTP, ODBC, TDL). Budget serious time here.
-4. **BSP reconciliation precision.** This is where accountants will judge the product. Must be exact, not "AI-flavored."
-5. **Compliance & credential scope.** Storing GDS, accounting, card and payment credentials per tenant puts us in DPDP (India) and PCI-DSS territory from day one.
-6. **Human-in-the-loop design for irreversible actions.** Getting the confirmation UX right — stringent enough to prevent mistakes, loose enough to not be annoying.
-
-## 8. First milestone (before writing any agent code)
-
-**One vertical slice, end to end:**
-
-> Flight enquiry → quote → ticket issue → invoice → BSP reconciliation
-
-- **One GDS driver:** Amadeus
-- **One accounting driver:** Tally
-- **Full stack:** canonical domain model + two drivers + tool runtime + orchestrator + desktop client.
-
-This proves the adapter pattern. After this, adding Sabre or Zoho Books becomes a driver, not a redesign.
-
-## 9. Open questions (to resolve before build start)
-
-1. **Credential vault & multi-tenant isolation model.** Per-tenant KMS? BYO-key option for enterprise customers?
-2. **Auth provider.** Clerk vs WorkOS vs Ory. Decide when the first protected route is scaffolded.
-3. **Pricing & packaging signal.** Influences whether Voyagent should also be single-binary (self-hosted-friendly) or cloud-only.
-
-**Resolved:**
-- ~~Market focus — India-first or global from day one?~~ **India-first go-to-market, globalization-safe architecture from day one.** See [D8](./docs/DECISIONS.md#d8--india-first-go-to-market-global-ready-architecture).
-- ~~Tech stack & repo layout.~~ **TypeScript frontends (Next.js web, Tauri 2 desktop, Expo mobile) + Python agent/driver runtime (FastAPI, Pydantic v2, Temporal, Playwright). pnpm + Turborepo monorepo with a uv workspace for Python.** See [D9](./docs/DECISIONS.md#d9--tech-stack-typescript-frontends--python-agentdriver-runtime) and [STACK.md](./docs/STACK.md).
-- ~~Agent runtime choice.~~ **Anthropic Python SDK with prompt caching enabled from day one, wrapped in our own orchestrator + domain-agent state machines.** See [D9](./docs/DECISIONS.md#d9--tech-stack-typescript-frontends--python-agentdriver-runtime).
-- ~~Canonical domain model v0.~~ **Landed under [`schemas/canonical/`](./schemas/canonical/):** primitives, identity, travel (flights full; hotels/visa/transfers skeletons), finance, and lifecycle types, with the D8 globalization contract baked in. See [D10](./docs/DECISIONS.md#d10--canonical-domain-model-v0-landed) and [docs/CANONICAL_MODEL.md](./docs/CANONICAL_MODEL.md).
-
-## 10. Repository layout (planned)
-
-Concrete layout and package naming are in [docs/STACK.md](./docs/STACK.md). High-level shape:
+## Repo layout
 
 ```
 voyagent/
-├── README.md                  ← you are here
-├── LICENSE
-├── pnpm-workspace.yaml        ← (planned) JS workspace root
-├── pyproject.toml             ← (planned) uv workspace root
-├── turbo.json                 ← (planned) pipeline graph
-├── docs/
-│   ├── ACTIVITIES.md          ← verbatim activity inventory from the customer
-│   ├── ARCHITECTURE.md        ← deep-dive on the 6-layer architecture
-│   ├── DECISIONS.md           ← decision log
-│   ├── STACK.md               ← tech stack + repo layout + tooling
-│   └── CANONICAL_MODEL.md     ← canonical domain model design rationale
-├── schemas/canonical/         ← Pydantic v2 — the canonical domain model (v0 landed)
-├── drivers/_contracts/        ← Driver capability Protocols + CapabilityManifest + error types
 ├── apps/
-│   └── web/                   ← Next.js 15 skeleton (page says "planning phase")
+│   ├── web/                 Next.js 15 application (chat UI, approvals, reports)
+│   ├── marketing/           Next.js marketing site
+│   ├── desktop/             Tauri 2 shell (skeleton)
+│   └── mobile/              Expo app (skeleton)
+├── packages/
+│   ├── core/                Shared TS types + canonical model mirror
+│   ├── chat/                Chat UI primitives
+│   ├── ui/                  Design-system components
+│   ├── sdk/                 Typed API client
+│   ├── config/              Shared ESLint/tsconfig/tailwind
+│   └── icons/               Icon set
 ├── services/
-│   ├── api/                   ← FastAPI skeleton — /health + /schemas/money probe
-│   ├── agent_runtime/         ← (skeleton) orchestrator + domain agents + tool runtime
-│   ├── worker/                ← (skeleton) Temporal workers
-│   └── browser_runner/        ← (skeleton) Playwright worker for portals
-├── tests/
-│   └── canonical/             ← pytest invariant tests for the canonical model
-├── infra/
-│   └── docker/                ← dev.yml — Postgres, Redis, Temporal, MinIO
-├── .github/workflows/ci.yml   ← node-test + python-test + codegen-drift jobs
-├── pnpm-workspace.yaml · turbo.json · package.json · pyproject.toml · Makefile
+│   ├── api/                 FastAPI app (auth, chat, reports, approvals, health)
+│   ├── agent_runtime/       Orchestrator, domain agents, tool runtime, SSE events
+│   ├── browser_runner/      Playwright worker for portals without APIs
+│   └── worker/              Background worker slot (unused in v0)
+├── drivers/
+│   ├── _contracts/          Capability Protocols + CapabilityManifest + error types
+│   ├── amadeus/             Amadeus self-service sandbox driver (partial)
+│   ├── tbo/                 TBO hotels driver (search + check_rate wired)
+│   ├── tally/               Tally XML-over-HTTP driver (skeleton)
+│   ├── bsp_india/           BSPlink HAF parser (skeleton)
+│   └── vfs/                 VFS Global browser-automation driver (skeleton)
+├── schemas/
+│   ├── canonical/           Pydantic v2 canonical domain model
+│   └── storage/             SQLAlchemy 2 ORM models
+├── tests/                   pytest suites (api, agent_runtime, drivers, canonical, storage, e2e, live)
+└── infra/
+    ├── alembic/             Migrations (head: 0003_passengers)
+    ├── deploy/              Host setup + systemd units + nginx vhost
+    └── scripts/             Operational helpers
 ```
 
-Everything above exists today as scaffolding. The next steps leave
-scaffolding territory: desktop (Tauri) and mobile (Expo) apps,
-`packages/` (@voyagent/core, ui, chat, sdk, config, icons), and the first
-concrete drivers (Amadeus, Tally, BSP India).
+## Running locally
 
-## 11. Contributing
+Backend:
 
-We are in the planning phase. The most valuable contributions right now are:
+```
+uv sync --package voyagent-api
+uv run uvicorn voyagent_api.main:app --reload --port 8010
+```
 
-- Critiques of the architecture (especially the adapter-first bet).
-- Concrete experience integrating with Tally, Amadeus, Sabre, TBO, VFS, or BSP.
-- Draft canonical schemas for any domain object listed above.
-- Prior-art pointers — especially failed or partially-successful attempts at travel-agency ERP/AI products.
+Frontend:
 
-Open a GitHub issue with the `planning` label or start a discussion.
+```
+pnpm install
+pnpm -r --filter "./packages/*" build
+pnpm --filter @voyagent/web build
+pnpm --filter @voyagent/marketing build
+```
 
-## 12. License
+For tests and dev work that shouldn't touch Postgres, set `VOYAGENT_STORES=memory` to force the in-memory store implementations. Otherwise, point `VOYAGENT_DB_URL` at a local Postgres and run migrations with `uv run alembic -c infra/alembic/alembic.ini upgrade head` (the current head is `0003_passengers`). Redis is required in both modes for JWT revocation; run `redis-server` on the default port or set `VOYAGENT_REDIS_URL`.
+
+The web app expects the API to be reachable at `VOYAGENT_INTERNAL_API_URL` for its server-side fetches; in local dev this is usually `http://127.0.0.1:8010`.
+
+## Deployment
+
+Voyagent runs on a single Ubuntu 22.04 host. Nginx + certbot terminate TLS, and the three application processes (`voyagent-api`, `voyagent-web`, `voyagent-marketing`) run as systemd units against native Postgres 16 and Redis 7. There is no Docker in the request path. See [`infra/deploy/README.md`](./infra/deploy/README.md) for the host-setup runbook and systemd unit reference.
+
+## Key environment variables
+
+| Variable                   | Purpose                                                                     |
+| -------------------------- | --------------------------------------------------------------------------- |
+| `VOYAGENT_DB_URL`          | SQLAlchemy async Postgres URL. Absence + `VOYAGENT_STORES=memory` = in-mem. |
+| `VOYAGENT_REDIS_URL`       | Redis URL for JWT revocation denylist and refresh rotation bookkeeping.     |
+| `VOYAGENT_AUTH_SECRET`     | HS256 signing secret for access JWTs. Must be set in prod.                  |
+| `VOYAGENT_INTERNAL_API_URL`| Loopback URL the web app uses for server-side fetches (e.g. `http://127.0.0.1:8081`). |
+| `ANTHROPIC_API_KEY`        | Anthropic credential for the agent loop.                                    |
+| `AMADEUS_CLIENT_ID` / `AMADEUS_CLIENT_SECRET` | Amadeus self-service sandbox.                            |
+| `TBO_USERNAME` / `TBO_PASSWORD` / `TBO_BASE_URL` | TBO hotels driver (sandbox creds pending).            |
+| `BSP_INDIA_USERNAME` / `BSP_INDIA_PASSWORD`      | BSPlink portal credentials.                           |
+| `VFS_USERNAME` / `VFS_PASSWORD`                  | VFS Global credentials used by the browser runner.    |
+
+## Domains
+
+| Domain agent       | What it can do today                                                              |
+| ------------------ | --------------------------------------------------------------------------------- |
+| `ticketing_visa`   | Fare search intake, passenger resolution, approval-gated issue/cancel stubs.      |
+| `hotels_holidays`  | Hotel search and rate-check against TBO (book/cancel/read still stubbed).         |
+| `accounting`       | Receivables/payables read paths; journal posting routed through Tally driver (skeleton). |
+
+Cross-cutting tools: passenger resolver (real, storage-backed via `StoragePassengerResolver`, tenant-isolated on composite unique indexes), approval gate (in-memory in dev, Postgres-backed `pending_approvals` in prod), and the reporter (read-only `/reports/receivables`, `/reports/payables`, `/reports/itinerary`). Receivables and payables currently return empty shapes — they are waiting on the invoices/ledger tables planned in Wave 4 of the implementation plan.
+
+Every side-effecting tool call is gated behind an explicit approval. Tools carry `side_effect` and `reversible` flags; irreversible actions (ticket issuance, payment, visa submission, journal posting) always pause for human confirmation and are recorded in the `audit_events` table.
+
+## Drivers
+
+| Driver              | Status              | Notes                                                            |
+| ------------------- | ------------------- | ---------------------------------------------------------------- |
+| `drivers/_contracts`| Complete            | All capability Protocols defined.                                |
+| `drivers/amadeus`   | Skeleton + partial  | Self-service sandbox only; production needs enterprise creds.    |
+| `drivers/tbo`       | Skeleton + partial  | Search + check_rate wired; book/cancel/read stubbed pending sandbox creds. |
+| `drivers/tally`     | Skeleton            | XML-over-:9000; desktop-bound; no read_invoice yet.              |
+| `drivers/bsp_india` | Skeleton            | Local HAF file parser; HTTP fetch scaffolded only.               |
+| `drivers/vfs`       | Skeleton            | Thin wrapper over `services/browser_runner`; selectors tenant-provided. |
+
+## Testing
+
+```
+uv run pytest tests/
+pnpm test
+```
+
+`tests/` is split across `api/`, `agent_runtime/`, `drivers/<name>/`, `canonical/`, `storage/`, `e2e/` (Playwright against a running stack), and `live/` (probes against the deployed host). See [docs/TESTING.md](./docs/TESTING.md) for how the live and e2e suites are wired.
+
+## Open questions and roadmap
+
+Current punch-list, known bugs (xfailed), open product decisions, and the prioritized wave plan live in [IMPLEMENTATION-PLAN.md](./IMPLEMENTATION-PLAN.md). Short version:
+
+- Fix the eight known-xfailed bugs in the agent loop, auth, and drivers.
+- Answer the five open product decisions (TBO creds, second hotels vendor, concurrent sign-in, approval TTL, tool output schema validation).
+- Graduate TBO hotel booking, promote Amadeus to production creds, and build the Tally desktop bridge.
+- Land the invoices/ledger tables so receivables and payables return real data instead of empty shapes.
+
+## License
 
 See [LICENSE](./LICENSE).

@@ -40,6 +40,7 @@ from .offer_cache import InMemoryOfferCache, build_offer_cache
 from .orchestrator import Orchestrator
 from .passenger_resolver import (
     InMemoryPassengerResolver,
+    StoragePassengerResolver,
     build_passenger_resolver,
 )
 from .session import InMemorySessionStore, SessionStore
@@ -126,7 +127,7 @@ class DefaultRuntime:
     session_store: SessionStore
     orchestrator: Orchestrator
     domain_agents: dict[str, DomainAgent]
-    passenger_resolver: InMemoryPassengerResolver = field(
+    passenger_resolver: InMemoryPassengerResolver | StoragePassengerResolver = field(
         default_factory=InMemoryPassengerResolver
     )
     driver_registry: DriverRegistry | None = field(default=None)
@@ -237,7 +238,19 @@ def build_default_runtime(
     anthropic_client = AnthropicClient(Settings())
 
     # ---- Persistence stores ------------------------------------------ #
-    engine = _maybe_build_engine(resolved_db_url)
+    #
+    # Selection rule:
+    #   * ``VOYAGENT_STORES=memory`` forces the in-memory stores even if a
+    #     DB URL is set — used by the pytest session-wide conftest so unit
+    #     tests don't need a live Postgres.
+    #   * Otherwise, if ``VOYAGENT_DB_URL`` is set we always build the
+    #     Postgres-backed session store, audit sink, and
+    #     :class:`StoragePassengerResolver`. This is the production path.
+    #   * With no DB URL we fall back to the in-memory stores — the
+    #     dev-only path for bare-metal local loops.
+    stores_mode = os.environ.get("VOYAGENT_STORES", "").strip().lower()
+    force_memory = stores_mode == "memory"
+    engine = None if force_memory else _maybe_build_engine(resolved_db_url)
     if engine is not None:
         # Localised import: SQLAlchemy is only needed on the Postgres path.
         from .stores_pg import PostgresAuditSink, PostgresSessionStore

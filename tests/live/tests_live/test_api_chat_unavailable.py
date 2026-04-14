@@ -1,11 +1,11 @@
 """Error-contract tests for the chat surface.
 
-These tests pin the *error contract* the chat routes currently emit
-while ``ANTHROPIC_API_KEY`` and ``CLERK_SECRET_KEY`` are still
-placeholders in the deployed environment. They do NOT exercise a
-successful chat flow. Once real credentials land, these tests should
-be tightened to assert on the happy path and specific auth-failure
-semantics instead of the broad accept-set used here.
+These tests pin the *error contract* the chat routes emit for
+unauthenticated callers, and for authenticated callers when the
+model backend is unavailable (``ANTHROPIC_API_KEY`` unset). They do
+NOT exercise a successful chat flow — once a real model key lands,
+tighten these tests to provision a tenant via
+``POST /api/auth/sign-up`` and assert on the happy path.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ def _assert_body_shape(resp: httpx.Response) -> None:
             f"json error missing 'detail': {list(data)}"
         )
     elif "text/html" in ctype:
-        # Likely Clerk sign-in interstitial - legal.
+        # A sign-in interstitial served at the chat route is legal.
         assert len(body) > 0
     else:
         # Redirect or empty body is fine for 307/308.

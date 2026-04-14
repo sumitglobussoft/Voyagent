@@ -1,9 +1,9 @@
 """FastAPI dependencies for the in-house auth subsystem.
 
-These callables intentionally re-use the names that the legacy Clerk
-shim exported (:class:`AuthenticatedPrincipal`, :func:`get_principal`,
-:func:`get_principal_optional`) so downstream modules — chat, tenancy,
-audit — do not need to change.
+Exposes :class:`AuthenticatedPrincipal` and the principal-resolving
+dependencies (:func:`get_current_principal`,
+:func:`get_current_principal_optional`) used by chat, tenancy, and
+audit.
 """
 
 from __future__ import annotations
@@ -37,12 +37,7 @@ async def db_session() -> AsyncIterator[AsyncSession]:
 
 
 class AuthenticatedPrincipal(BaseModel):
-    """A verified caller identity, derived from a Voyagent access JWT.
-
-    Mirrors the field names the rest of the codebase already uses so
-    the swap from Clerk to in-house auth is invisible to chat /
-    tenancy.
-    """
+    """A verified caller identity, derived from a Voyagent access JWT."""
 
     user_id: str = Field(min_length=1)
     tenant_id: str = Field(min_length=1)

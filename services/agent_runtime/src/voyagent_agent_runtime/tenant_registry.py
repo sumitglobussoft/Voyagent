@@ -19,8 +19,8 @@ implementations shipped here are:
 
 * :class:`EnvCredentialResolver` — reads ``VOYAGENT_AMADEUS_*`` env vars
   just like the old :func:`build_default_registry`. Every tenant gets the
-  same credentials. Useful for solo-dev where Clerk is wired but a proper
-  credential vault isn't.
+  same credentials. Useful for solo-dev before a proper credential vault
+  is wired up.
 * :class:`StorageCredentialResolver` — reads decrypted
   :class:`TenantCredential` rows when :mod:`schemas.storage` is
   available. Falls back to :class:`EnvCredentialResolver` otherwise, so
@@ -101,6 +101,23 @@ class EnvCredentialResolver:
             return {
                 "client_id": client_id,
                 "client_secret": client_secret,
+                "api_base": api_base,
+            }
+        if provider == "tbo":
+            username = self._env.get("VOYAGENT_TBO_USERNAME", "")
+            password = self._env.get("VOYAGENT_TBO_PASSWORD", "")
+            api_base = self._env.get(
+                "VOYAGENT_TBO_API_BASE",
+                "https://api.tbotechnology.in/TBOHolidays_HotelAPI",
+            )
+            if not username or not password:
+                # Returning None marks the provider unconfigured so the
+                # registry simply skips driver construction — the hotels
+                # domain then raises "no hotel driver configured".
+                return None
+            return {
+                "username": username,
+                "password": password,
                 "api_base": api_base,
             }
         return None
@@ -251,6 +268,13 @@ class TenantRegistry:
                 registry.register("FareSearchDriver", driver)
                 registry.register("PNRDriver", driver)
 
+        tbo_creds = await self._resolver(tenant_id, "tbo")
+        if tbo_creds is not None:
+            tbo_driver = _build_tbo_driver(tbo_creds)
+            if tbo_driver is not None:
+                registry.register("HotelSearchDriver", tbo_driver)
+                registry.register("HotelBookingDriver", tbo_driver)
+
         logger.info(
             "tenant_registry.built tenant=%s drivers=%d",
             tenant_id,
@@ -307,6 +331,42 @@ def _build_amadeus_driver(creds: dict[str, Any]) -> Any | None:
         logger.warning("AmadeusConfig build failed: %s", exc)
         return None
     return AmadeusDriver(config)
+
+
+def _build_tbo_driver(creds: dict[str, Any]) -> Any | None:
+    """Construct a :class:`TBODriver` from a credentials dict.
+
+    Mirrors :func:`_build_amadeus_driver`: missing driver wheel or
+    malformed credentials produce ``None`` rather than taking down the
+    whole tenant registry. A tenant configured without TBO credentials
+    simply gets no ``HotelSearchDriver`` registered, and the hotels
+    tool layer surfaces "no hotel driver configured for this tenant".
+    """
+    try:
+        from drivers.tbo import TBOConfig, TBODriver
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("tbo driver not installed: %s", exc)
+        return None
+
+    try:
+        from pydantic import SecretStr
+
+        config = TBOConfig(
+            api_base=creds.get(
+                "api_base", "https://api.tbotechnology.in/TBOHolidays_HotelAPI"
+            ),
+            username=creds.get("username", ""),
+            password=SecretStr(creds.get("password", "")),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("TBOConfig build failed: %s", exc)
+        return None
+
+    try:
+        return TBODriver(config)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("TBODriver construction failed: %s", exc)
+        return None
 
 
 # --------------------------------------------------------------------------- #

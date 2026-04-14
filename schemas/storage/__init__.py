@@ -30,6 +30,7 @@ from .crypto import (
     SecurityError,
     build_kms_provider,
 )
+from .passenger import PassengerRow
 from .session import (
     ACTOR_KIND_SATYPE,
     ActorKindEnum,
@@ -53,6 +54,7 @@ __all__ = [
     "KMSProvider",
     "MessageRow",
     "NullKMS",
+    "PassengerRow",
     "PendingApprovalRow",
     "RefreshTokenRow",
     "SecurityError",

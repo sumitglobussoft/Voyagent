@@ -76,6 +76,7 @@ from .primitives import (
 )
 from .travel import (
     BaggageAllowance,
+    BoardBasis,
     Booking,
     BookingStatus,
     CabinClass,
@@ -84,6 +85,10 @@ from .travel import (
     FlightSegment,
     HotelBooking,
     HotelBookingStatus,
+    HotelProperty,
+    HotelRate,
+    HotelRoom,
+    HotelSearchResult,
     HotelStay,
     Itinerary,
     ItinerarySegment,
@@ -132,6 +137,7 @@ __all__ = [
     "TaxRegistration",
     # travel
     "BaggageAllowance",
+    "BoardBasis",
     "Booking",
     "BookingStatus",
     "CabinClass",
@@ -140,6 +146,10 @@ __all__ = [
     "FlightSegment",
     "HotelBooking",
     "HotelBookingStatus",
+    "HotelProperty",
+    "HotelRate",
+    "HotelRoom",
+    "HotelSearchResult",
     "HotelStay",
     "Itinerary",
     "ItinerarySegment",

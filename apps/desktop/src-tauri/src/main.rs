@@ -7,10 +7,11 @@
 // scoped FS access later.
 //
 // Plugin roster:
-//   - shell       → opening the Clerk hosted sign-in URL in the OS browser.
+//   - shell       → opening external URLs in the OS browser.
 //   - dialog      → native open/save/alert dialogs.
 //   - stronghold  → available to the frontend for high-value secrets.
-//   - deep-link   → `voyagent://auth/callback` OAuth redirect handler.
+//   - deep-link   → registered for future non-auth deep links
+//                   (auth itself is plain email/password over HTTP).
 //   - updater     → production auto-update channel (see commands/updater.rs).
 
 // On Windows, hide the console window in release builds.
@@ -18,7 +19,7 @@
 
 mod commands;
 
-use commands::auth::{auth_clear_token, auth_load_token, auth_store_token};
+use commands::auth::{voyagent_clear_session, voyagent_load_session, voyagent_store_session};
 use commands::local_driver::local_driver_invoke;
 use commands::updater::check_for_updates;
 
@@ -30,11 +31,11 @@ fn main() {
             // The Stronghold plugin expects a hasher that turns the
             // user-supplied passphrase into a 32-byte key. We use a
             // BLAKE3-style hash via the plugin's default helpers when
-            // available; here we fall back to a simple SHA-256 since
-            // Stronghold isn't consulted on the hot path (Clerk session
-            // tokens use the JSON blob store in commands/auth.rs). When
-            // we move to Stronghold-backed driver credentials, swap this
-            // for `argon2` with a per-machine salt.
+            // available; here we fall back to a simple hash since
+            // Stronghold isn't consulted on the hot path (Voyagent
+            // session tokens use the JSON blob store in commands/auth.rs).
+            // When we move to Stronghold-backed driver credentials, swap
+            // this for `argon2` with a per-machine salt.
             use std::collections::hash_map::DefaultHasher;
             use std::hash::{Hash, Hasher};
             let mut h = DefaultHasher::new();
@@ -50,9 +51,9 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             local_driver_invoke,
-            auth_store_token,
-            auth_load_token,
-            auth_clear_token,
+            voyagent_store_session,
+            voyagent_load_session,
+            voyagent_clear_session,
             check_for_updates,
         ])
         .run(tauri::generate_context!())

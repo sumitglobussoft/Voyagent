@@ -52,7 +52,7 @@ tests/e2e/
     docs.spec.ts               /docs/[slug] for all 5 slugs
     metadata.spec.ts           robots.txt, sitemap.xml, head meta
     contact-form.spec.ts       client + server validation and success state
-    app-gated.spec.ts          /app redirect / Clerk tolerance
+    app-gated.spec.ts          /app redirect to /sign-in when unauthenticated
     api-smoke.spec.ts          /api/health, schemas, chat error contract
     accessibility.spec.ts      axe-core audit on key pages
     performance-budget.spec.ts loose goto/FCP smoke
@@ -72,8 +72,9 @@ HTML reports land in `tests/e2e/playwright-report/`, JUnit in
 
 ## Known gaps (v0)
 
-- No authenticated-flow tests. Clerk keys on the current deployment are
-  placeholders, so the suite only verifies the sign-in gate exists.
+- No authenticated-flow tests. The suite only verifies that the
+  in-house middleware redirects unauthenticated visitors from `/app`
+  to `/sign-in`; it does not drive a full sign-up / sign-in session.
 - No real chat-stream tests. `ANTHROPIC_API_KEY` is unset on the target;
   the suite verifies the error contract (401 / 403 / 503 / redirect)
   rather than a successful chat turn.

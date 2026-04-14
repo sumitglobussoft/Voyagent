@@ -21,11 +21,11 @@
 | TS contract | Pydantic → JSON Schema → **`openapi-typescript`** → `@voyagent/core` | Generated, checked into git |
 | Agent loop | **Anthropic Python SDK** (prompt caching on) | |
 | Browser automation | **Playwright (Python)** | Dedicated worker service |
-| Workflows | **Temporal** (Python SDK) | Long-running, retryable, durable |
+| Agent orchestration | **In-process agent loop** in `services/agent_runtime`, streamed via FastAPI SSE | Synchronous v0; no durable workflow engine yet (see [D11](./DECISIONS.md#d11--v0-ships-with-in-process-agent-orchestration-no-temporal)) |
 | DB | **PostgreSQL 16** + **SQLAlchemy 2 / SQLModel** | |
 | Cache / queue | **Redis 7** | |
 | Object store | **S3-compatible** (AWS S3 / R2 / MinIO for local dev) | |
-| Auth | **Clerk** or **WorkOS** (web/mobile) + Tauri-native token exchange for desktop | TBD — not blocking |
+| Auth | **In-house** email + password (argon2id, HS256 access JWT, hashed refresh tokens in Postgres, httpOnly cookies on web, bearer on desktop/mobile) | `VOYAGENT_AUTH_SECRET` signs JWTs |
 | Telemetry | **OpenTelemetry** → Grafana/Tempo/Loki | Traces include agent turns |
 | CI | **GitHub Actions** | `pnpm test` + `uv run pytest` + Turbo cache |
 
@@ -60,7 +60,7 @@ voyagent/
 ├── services/
 │   ├── api/                       # FastAPI public HTTP + SSE — voyagent-api
 │   ├── agent_runtime/             # Orchestrator, domain agents, tool runtime — voyagent-agent-runtime
-│   ├── worker/                    # Temporal workers — voyagent-worker
+│   ├── worker/                    # (skeleton) background worker slot, unused in v0
 │   └── browser_runner/            # Playwright worker for portal drivers — voyagent-browser-runner
 │
 ├── drivers/
@@ -84,7 +84,7 @@ voyagent/
 │       └── ...
 │
 ├── infra/
-│   ├── docker/                    # Compose files for local dev (pg, redis, temporal, minio)
+│   ├── docker/                    # Compose files for local dev (pg, redis, minio)
 │   ├── terraform/                 # Cloud infra (later)
 │   └── scripts/                   # codegen, lint, release
 │
@@ -134,13 +134,12 @@ CI gate: regenerate `generated.ts` on every push and fail if the working tree is
 # Once
 pnpm install                         # JS deps
 uv sync                              # Python deps
-docker compose -f infra/docker/dev.yml up -d   # pg, redis, temporal, minio
+docker compose -f infra/docker/dev.yml up -d   # pg, redis, minio
 
 # Day to day
 pnpm dev                             # turbo runs web + desktop + mobile dev servers
 uv run voyagent-api                  # FastAPI with reload
 uv run voyagent-agent-runtime        # agent loop with reload
-uv run voyagent-worker               # Temporal worker
 uv run voyagent-browser-runner       # Playwright worker
 
 # Contract
@@ -164,10 +163,8 @@ pnpm codegen                         # regenerate TS types from FastAPI OpenAPI
 
 ## Open stack questions (non-blocking)
 
-- **Auth provider.** Clerk vs WorkOS vs Ory. Decide when we scaffold the first protected route.
-- **Workflow engine.** Temporal is the pick; revisit if ops complexity outweighs durability benefits after the first vertical slice.
+- **Durable workflow engine.** Not in v0 — the agent loop runs in-process and streams over SSE (see [D11](./DECISIONS.md#d11--v0-ships-with-in-process-agent-orchestration-no-temporal)). Revisit once a real driver retry / long-running tracking use case (visa tracking, BSP reconciliation) justifies the ops cost; Temporal, Inngest, and Hatchet are all on the table at that point.
 - **Design-system boundary.** Tamagui for everything vs. Tamagui on native + Radix/Tailwind on web. Decide during `packages/ui` scaffolding.
-- **Hosted vs self-hosted Temporal.** Temporal Cloud vs a local cluster; cost-dependent.
 
 ## First executable step (when we're ready to leave planning)
 

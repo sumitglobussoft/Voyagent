@@ -1365,8 +1365,375 @@ register_approval_summary("post_journal_entry", _post_journal_summary)
 register_approval_summary("create_invoice", _create_invoice_summary)
 
 
+# --------------------------------------------------------------------------- #
+# --- hotels_holidays tools ---                                               #
+# --------------------------------------------------------------------------- #
+
+
+SEARCH_HOTELS_SCHEMA: dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "required": ["country", "city", "check_in", "check_out", "guests"],
+    "properties": {
+        "country": {"type": "string", "pattern": r"^[A-Z]{2}$"},
+        "city": {"type": "string", "minLength": 1},
+        "check_in": {"type": "string", "format": "date"},
+        "check_out": {"type": "string", "format": "date"},
+        "guests": {"type": "integer", "minimum": 1},
+        "currency": {"type": "string", "pattern": r"^[A-Z]{3}$"},
+        "budget_max": {"type": "string"},
+    },
+    "additionalProperties": False,
+}
+
+
+CHECK_HOTEL_RATE_SCHEMA: dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "required": ["rate_key"],
+    "properties": {"rate_key": {"type": "string", "minLength": 1}},
+    "additionalProperties": False,
+}
+
+
+BOOK_HOTEL_SCHEMA: dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "required": ["rate_key", "passenger_ids"],
+    "properties": {
+        "rate_key": {"type": "string", "minLength": 1},
+        "passenger_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "minLength": 1},
+        },
+        "buyer_reference": {"type": "string"},
+    },
+    "additionalProperties": False,
+}
+
+
+CANCEL_HOTEL_BOOKING_SCHEMA: dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "required": ["booking_id"],
+    "properties": {"booking_id": {"type": "string", "minLength": 1}},
+    "additionalProperties": False,
+}
+
+
+READ_HOTEL_BOOKING_SCHEMA: dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "required": ["booking_id"],
+    "properties": {"booking_id": {"type": "string", "minLength": 1}},
+    "additionalProperties": False,
+}
+
+
+async def _resolve_hotel_search_driver(ctx: ToolContext) -> Any:
+    """Return the tenant's HotelSearchDriver or raise a clear domain error.
+
+    A missing driver means the tenant has no TBO credentials (or no
+    hotel driver at all). We surface that as a structured tool result
+    rather than an exception so the agent can relay it plainly — same
+    failure mode ticketing_visa has when Amadeus credentials are
+    missing.
+    """
+    registry = await _resolve_registry(ctx)
+    try:
+        return registry.get("HotelSearchDriver")
+    except KeyError as exc:
+        raise RuntimeError(
+            "no hotel driver configured for this tenant"
+        ) from exc
+
+
+async def _resolve_hotel_booking_driver(ctx: ToolContext) -> Any:
+    registry = await _resolve_registry(ctx)
+    try:
+        return registry.get("HotelBookingDriver")
+    except KeyError as exc:
+        raise RuntimeError(
+            "no hotel driver configured for this tenant"
+        ) from exc
+
+
+def _hotel_result_summary(result: Any) -> dict[str, Any]:
+    """Compress a canonical :class:`HotelSearchResult` into an LLM summary."""
+    prop = getattr(result, "property", None)
+    rates = getattr(result, "rates", []) or []
+    cheapest = None
+    for r in rates:
+        price = getattr(r, "price", None)
+        if price is None:
+            continue
+        if cheapest is None or price.amount < cheapest.amount:
+            cheapest = price
+    return {
+        "property_id": getattr(prop, "id", None),
+        "name": getattr(prop, "name", None),
+        "city": getattr(prop, "city", None),
+        "country": getattr(prop, "country", None),
+        "star_rating": getattr(prop, "star_rating", None),
+        "rate_count": len(rates),
+        "from_price": (
+            f"{cheapest.currency} {cheapest.amount}" if cheapest is not None else None
+        ),
+        "rate_keys": [getattr(r, "rate_key", None) for r in rates[:5]],
+    }
+
+
+@tool(
+    name="search_hotels",
+    description=(
+        "Shop hotel availability. Read-only. Returns compact property "
+        "summaries with rate keys the agent can pass to check_hotel_rate "
+        "or book_hotel. Always call this before quoting a hotel."
+    ),
+    domain="hotels_holidays",
+    input_schema=SEARCH_HOTELS_SCHEMA,
+    side_effect=False,
+    reversible=True,
+    approval_required=False,
+)
+async def search_hotels(tool_input: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
+    """Handler for ``search_hotels``."""
+    from drivers._contracts.hotel_search import HotelSearchCriteria
+    from schemas.canonical import Money as _Money
+
+    driver = await _resolve_hotel_search_driver(ctx)
+
+    budget_max = None
+    if tool_input.get("budget_max") and tool_input.get("currency"):
+        try:
+            budget_max = _Money(
+                amount=Decimal(str(tool_input["budget_max"])),
+                currency=str(tool_input["currency"]).upper(),
+            )
+        except Exception:
+            budget_max = None
+
+    criteria = HotelSearchCriteria(
+        destination_country=str(tool_input["country"]).upper(),
+        destination_city=str(tool_input["city"]),
+        check_in=_parse_date(tool_input["check_in"]),
+        check_out=_parse_date(tool_input["check_out"]),
+        guest_count=int(tool_input["guests"]),
+        budget_max=budget_max,
+    )
+
+    # Drivers that expose the canonical search_results shape are preferred;
+    # we fall back to the driver-layer HotelOffer list for older drivers.
+    results_fn = getattr(driver, "search_results", None)
+    if callable(results_fn):
+        results = await results_fn(criteria)
+        summaries = [_hotel_result_summary(r) for r in list(results)[:20]]
+        return {"count": len(results), "results": summaries}
+
+    offers = await driver.search(criteria)
+    summaries = [
+        {
+            "property_name": getattr(o, "property_name", None),
+            "property_ref": getattr(o, "property_ref", None),
+            "country": getattr(o, "address_country", None),
+            "price": f"{getattr(o.cost, 'currency', '')} {getattr(o.cost, 'amount', '')}".strip(),
+            "board": getattr(o, "board_type", None),
+            "offer_ref": getattr(o, "offer_ref", None),
+        }
+        for o in list(offers)[:20]
+    ]
+    return {"count": len(offers), "offers": summaries}
+
+
+@tool(
+    name="check_hotel_rate",
+    description=(
+        "Re-price a shopped hotel rate before booking. Read-only. "
+        "Returns the current price and a (possibly refreshed) rate key. "
+        "ALWAYS call this immediately before book_hotel."
+    ),
+    domain="hotels_holidays",
+    input_schema=CHECK_HOTEL_RATE_SCHEMA,
+    side_effect=False,
+    reversible=True,
+    approval_required=False,
+)
+async def check_hotel_rate(
+    tool_input: dict[str, Any], ctx: ToolContext
+) -> dict[str, Any]:
+    """Handler for ``check_hotel_rate``."""
+    driver = await _resolve_hotel_search_driver(ctx)
+    check_fn = getattr(driver, "check_rate", None)
+    if not callable(check_fn):
+        return {
+            "checked": False,
+            "reason": "capability_not_supported",
+            "detail": "Hotel driver does not expose check_rate.",
+        }
+    try:
+        rate = await check_fn(tool_input["rate_key"])
+    except CapabilityNotSupportedError as exc:
+        return {
+            "checked": False,
+            "reason": "capability_not_supported",
+            "detail": exc.message,
+        }
+    price = getattr(rate, "price", None)
+    return {
+        "checked": True,
+        "rate_key": getattr(rate, "rate_key", None),
+        "price": (
+            f"{price.currency} {price.amount}" if price is not None else None
+        ),
+        "is_refundable": bool(getattr(rate, "is_refundable", False)),
+        "board_basis": getattr(getattr(rate, "room", None), "board_basis", None),
+    }
+
+
+@tool(
+    name="book_hotel",
+    description=(
+        "Confirm a hotel booking at the supplier. SIDE EFFECT, reversible "
+        "(via cancel_hotel_booking subject to supplier rules). Always "
+        "requires human approval. Supply the rate_key from a recent "
+        "check_hotel_rate call and the canonical passenger ids."
+    ),
+    domain="hotels_holidays",
+    input_schema=BOOK_HOTEL_SCHEMA,
+    side_effect=True,
+    reversible=True,
+    approval_required=True,
+    approval_roles=["agency_admin", "hotels_lead"],
+)
+async def book_hotel(tool_input: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
+    """Handler for ``book_hotel``.
+
+    The v0 TBO driver declares this capability ``not_supported``; we
+    catch :class:`CapabilityNotSupportedError` and surface a clear
+    explanation instead of propagating the raw exception.
+    """
+    driver = await _resolve_hotel_booking_driver(ctx)
+    try:
+        booking = await driver.book(
+            tool_input["rate_key"],
+            # v0 drivers that support book() receive a canonical HotelStay
+            # assembled upstream; the scaffold TBO driver raises before it
+            # reaches this branch.
+            None,  # type: ignore[arg-type]
+        )
+    except CapabilityNotSupportedError as exc:
+        return {
+            "booked": False,
+            "reason": "capability_not_supported",
+            "detail": exc.message,
+        }
+    return {
+        "booked": True,
+        "booking_id": getattr(booking, "id", None),
+        "supplier": getattr(booking, "supplier", None),
+        "supplier_ref": getattr(booking, "supplier_ref", None),
+        "status": getattr(booking, "status", None),
+    }
+
+
+@tool(
+    name="cancel_hotel_booking",
+    description=(
+        "Cancel a confirmed hotel booking at the supplier. SIDE EFFECT. "
+        "Always requires human approval. Refund rules depend on the "
+        "original cancellation policy."
+    ),
+    domain="hotels_holidays",
+    input_schema=CANCEL_HOTEL_BOOKING_SCHEMA,
+    side_effect=True,
+    reversible=False,
+    approval_required=True,
+    approval_roles=["agency_admin", "hotels_lead"],
+)
+async def cancel_hotel_booking(
+    tool_input: dict[str, Any], ctx: ToolContext
+) -> dict[str, Any]:
+    """Handler for ``cancel_hotel_booking``."""
+    driver = await _resolve_hotel_booking_driver(ctx)
+    try:
+        booking = await driver.cancel(tool_input["booking_id"])
+    except CapabilityNotSupportedError as exc:
+        return {
+            "cancelled": False,
+            "reason": "capability_not_supported",
+            "detail": exc.message,
+        }
+    return {
+        "cancelled": True,
+        "booking_id": getattr(booking, "id", None),
+        "status": getattr(booking, "status", None),
+    }
+
+
+@tool(
+    name="read_hotel_booking",
+    description=(
+        "Fetch a hotel booking from the supplier by id. Read-only. "
+        "Returns a compact structured summary."
+    ),
+    domain="hotels_holidays",
+    input_schema=READ_HOTEL_BOOKING_SCHEMA,
+    side_effect=False,
+    reversible=True,
+    approval_required=False,
+)
+async def read_hotel_booking(
+    tool_input: dict[str, Any], ctx: ToolContext
+) -> dict[str, Any]:
+    """Handler for ``read_hotel_booking``."""
+    driver = await _resolve_hotel_booking_driver(ctx)
+    try:
+        booking = await driver.read(tool_input["booking_id"])
+    except CapabilityNotSupportedError as exc:
+        return {
+            "read": False,
+            "reason": "capability_not_supported",
+            "detail": exc.message,
+        }
+    return {
+        "read": True,
+        "booking_id": getattr(booking, "id", None),
+        "supplier": getattr(booking, "supplier", None),
+        "supplier_ref": getattr(booking, "supplier_ref", None),
+        "status": getattr(booking, "status", None),
+    }
+
+
+def _book_hotel_summary(tool_input: dict[str, Any]) -> str:
+    rate = tool_input.get("rate_key") or "(no rate_key)"
+    pax = len(tool_input.get("passenger_ids") or [])
+    return (
+        f"Confirm hotel booking on rate_key {rate!r} for {pax} guest(s). "
+        "Reversible via cancel_hotel_booking subject to supplier rules."
+    )
+
+
+def _cancel_hotel_summary(tool_input: dict[str, Any]) -> str:
+    return (
+        f"Cancel hotel booking {tool_input.get('booking_id')!r}. "
+        "Refund depends on original cancellation policy."
+    )
+
+
+register_approval_summary("book_hotel", _book_hotel_summary)
+register_approval_summary("cancel_hotel_booking", _cancel_hotel_summary)
+
+
 ORCHESTRATOR_TOOL_NAMES: list[str] = ["handoff", "clarify"]
 TICKETING_VISA_TOOL_NAMES: list[str] = ["search_flights", "read_pnr", "issue_ticket"]
+HOTELS_HOLIDAYS_TOOL_NAMES: list[str] = [
+    "search_hotels",
+    "check_hotel_rate",
+    "book_hotel",
+    "cancel_hotel_booking",
+    "read_hotel_booking",
+]
 ACCOUNTING_TOOL_NAMES: list[str] = [
     "list_ledger_accounts",
     "post_journal_entry",
@@ -1382,6 +1749,7 @@ __all__ = [
     "AuditSink",
     "BSP_REPORTS_CACHE_KEY",
     "DRIVER_REGISTRY_KEY",
+    "HOTELS_HOLIDAYS_TOOL_NAMES",
     "InMemoryAuditSink",
     "ORCHESTRATOR_TOOL_NAMES",
     "TENANT_REGISTRY_KEY",

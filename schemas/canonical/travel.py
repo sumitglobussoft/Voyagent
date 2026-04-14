@@ -100,6 +100,92 @@ class FlightSegment(BaseModel):
         return self
 
 
+class BoardBasis(StrEnum):
+    """Meal plan included in a hotel rate.
+
+    Values match the abbreviations printed on most GDS/aggregator rate
+    grids: RO=room only, BB=bed+breakfast, HB=half board, FB=full board,
+    AI=all inclusive.
+    """
+
+    RO = "RO"
+    BB = "BB"
+    HB = "HB"
+    FB = "FB"
+    AI = "AI"
+
+
+class HotelRoom(BaseModel):
+    """A room definition inside a :class:`HotelRate`."""
+
+    model_config = _strict()
+
+    code: str = Field(description="Vendor-local room category code.")
+    name: str
+    board_basis: BoardBasis = BoardBasis.RO
+    max_occupancy: int = Field(ge=1)
+    bed_type: str | None = None
+
+
+class HotelRate(BaseModel):
+    """A priced, shoppable offer for one room at one property for one stay.
+
+    ``rate_key`` is an opaque vendor token — the agent must NOT
+    interpret it, only pass it back to the driver on ``check_rate`` /
+    ``book``.
+    """
+
+    model_config = _strict()
+
+    room: HotelRoom
+    price: Money = Field(description="Total stay cost across all nights.")
+    cancellation_policy: LocalizedText | None = None
+    is_refundable: bool = False
+    rate_key: str = Field(description="Opaque vendor token — round-tripped verbatim.")
+
+
+class HotelProperty(BaseModel):
+    """A bookable hotel property. Driver-layer enrichment of a search hit."""
+
+    model_config = _strict()
+
+    id: str = Field(description="Vendor-local property identifier.")
+    name: str
+    address: str | None = None
+    city: str
+    country: CountryCode
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+    star_rating: int | None = Field(default=None, ge=1, le=5)
+    amenities: list[str] = Field(default_factory=list)
+    images: list[str] = Field(
+        default_factory=list,
+        description="Public image URLs. Plain strings in v0; no HttpUrl round-trip yet.",
+    )
+
+
+class HotelSearchResult(BaseModel):
+    """One property + all the rates a driver returned for it.
+
+    Emitted by ``HotelSearchDriver.search`` and consumed by the hotels
+    domain agent when presenting shoppable options.
+    """
+
+    model_config = _strict()
+
+    property: HotelProperty
+    rates: list[HotelRate] = Field(min_length=1)
+    check_in: date
+    check_out: date
+    guest_count: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def _dates_sane(self) -> HotelSearchResult:
+        if self.check_out <= self.check_in:
+            raise ValueError("check_out must be after check_in.")
+        return self
+
+
 class HotelStay(BaseModel):
     """A stay at one hotel property. v0 skeleton — fields will expand in v1
     as hotel-bank drivers land (room codes, board types, cancellation rules)."""
@@ -119,6 +205,10 @@ class HotelStay(BaseModel):
 
     room_type: str | None = None
     board_type: str | None = Field(default=None, description="Free-form in v0: 'BB', 'HB', 'FB', 'AI'. Will be enumerated in v1.")
+    board_basis: BoardBasis | None = Field(
+        default=None,
+        description="Structured board basis when the driver can supply it. Coexists with legacy board_type.",
+    )
     guest_count: int = Field(ge=1)
 
     status: SegmentStatus = SegmentStatus.PLANNED
@@ -301,9 +391,11 @@ class Ticket(Timestamps):
 
 
 class HotelBookingStatus(StrEnum):
+    PENDING = "pending"
     REQUESTED = "requested"
     CONFIRMED = "confirmed"
     CANCELLED = "cancelled"
+    FAILED = "failed"
 
 
 class HotelBooking(Timestamps):
@@ -322,6 +414,14 @@ class HotelBooking(Timestamps):
 
     cost: Money
     currency: CurrencyCode
+    passenger_ids: list[EntityId] = Field(
+        default_factory=list,
+        description="Canonical Passenger ids for the guests named on the booking.",
+    )
+    selected_rate_key: str | None = Field(
+        default=None,
+        description="Vendor rate token consumed when the booking was confirmed.",
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -413,6 +513,7 @@ class Booking(Timestamps):
 
 __all__ = [
     "BaggageAllowance",
+    "BoardBasis",
     "Booking",
     "BookingStatus",
     "CabinClass",
@@ -421,6 +522,10 @@ __all__ = [
     "FlightSegment",
     "HotelBooking",
     "HotelBookingStatus",
+    "HotelProperty",
+    "HotelRate",
+    "HotelRoom",
+    "HotelSearchResult",
     "HotelStay",
     "Itinerary",
     "ItinerarySegment",

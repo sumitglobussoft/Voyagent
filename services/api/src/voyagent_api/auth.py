@@ -1,8 +1,9 @@
-"""Compatibility shim for the in-house auth subsystem.
+"""Compatibility shim re-exporting the in-house auth public surface.
 
-The real implementation now lives in :mod:`voyagent_api.auth_inhouse`.
-This module re-exports the names other modules used to import from
-the old Clerk-backed file so chat/tenancy/audit don't have to change.
+The real implementation lives in :mod:`voyagent_api.auth_inhouse`. This
+module re-exports :class:`AuthenticatedPrincipal` and the principal
+dependencies under their canonical names so chat / tenancy / audit can
+keep importing ``voyagent_api.auth`` unchanged.
 """
 
 from __future__ import annotations

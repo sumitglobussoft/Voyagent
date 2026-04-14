@@ -79,9 +79,18 @@ during `expo start`, which is fine for skeleton iteration.
 `EXPO_PUBLIC_VOYAGENT_ACTOR_ID` are read by `lib/sdk.ts`. See
 `.env.example`.
 
+## Auth
+
+Cookie-free: mobile can't share HttpOnly cookies with the web app, so
+`lib/auth.tsx` persists the access token, refresh token, and cached user
+in `expo-secure-store` (iOS Keychain / Android Keystore) and talks to
+`/api/auth/sign-up`, `/api/auth/sign-in`, `/api/auth/me`,
+`/api/auth/refresh`, and `/api/auth/sign-out` directly. The SDK pulls a
+fresh access token via `VoyagentAuth.getAccessToken()` on every request,
+which decodes the JWT `exp` and refreshes pre-emptively when within 30s.
+
 ## Known limitations
 
-- No Expo auth module yet (Clerk Expo lands later).
 - No real chat rendering — `@voyagent/chat` needs RN adaptation first.
 - No real pairing — QR scanner stubbed.
 - Icon / splash PNGs not generated.

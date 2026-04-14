@@ -2,9 +2,8 @@
 
 Background
 ----------
-Clerk mints short-lived JWTs (default 60 s) so a stolen token is only
-marginally more dangerous than a stolen session cookie. Still, users
-expect ``/auth/revoke`` (and admin-driven revocation) to work *now*,
+Voyagent access JWTs are short-lived, but users expect
+``/auth/sign-out`` (and admin-driven revocation) to take effect *now*,
 not at the next ``exp``. The :class:`RevocationList` protocol provides
 the seam; :class:`RedisRevocationList` is the production implementation.
 

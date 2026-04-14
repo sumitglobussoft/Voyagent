@@ -24,6 +24,7 @@ from schemas.canonical import Money
 from voyagent_api import chat
 from voyagent_api.audit import record_auth_failure
 from voyagent_api.auth_inhouse.routes import router as auth_router
+from voyagent_api.reports import router as reports_router
 from voyagent_api.auth_inhouse.settings import get_auth_settings
 
 logger = logging.getLogger(__name__)
@@ -61,6 +62,7 @@ app.add_middleware(
 
 app.include_router(chat.router)
 app.include_router(auth_router)
+app.include_router(reports_router)
 
 
 # --------------------------------------------------------------------------- #

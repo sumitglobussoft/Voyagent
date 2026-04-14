@@ -75,20 +75,22 @@ cascading assertion errors.
 ## Error-contract stance
 
 The chat routes currently return **401 / 403 / 503 / 307 / 308** when
-hit unauthenticated, because `ANTHROPIC_API_KEY` and
-`CLERK_SECRET_KEY` are placeholders in the deployed environment. All
-five status codes are treated as legal. Once real credentials are
-configured, `test_api_chat_unavailable.py` should be tightened to
-assert a single specific auth-failure code and to add happy-path
-tests.
+hit unauthenticated, because `ANTHROPIC_API_KEY` is a placeholder in
+the deployed environment and the in-house auth middleware rejects
+cookieless callers outright. All five status codes are treated as
+legal. Once a real `ANTHROPIC_API_KEY` is configured,
+`test_api_chat_unavailable.py` should be tightened to assert a single
+specific auth-failure code and to add happy-path tests that first
+provision a test tenant via `POST /api/auth/sign-up`.
 
-Similarly, `/app` may currently return a 500 with "Clerk" in the body
-until the Clerk keys are configured. That is the known state; the
-test pins it and will fail loudly if *any other* 500 starts appearing.
+`/app` is gated by the web app's middleware — unauthenticated visitors
+are redirected to `/sign-in`. `test_app_gated.py` pins that contract:
+it tolerates a 2xx interstitial, a 3xx redirect to `/sign-in`, or a
+404 for `/app/dashboard`.
 
 ## Known gaps
 
-- No real Clerk sign-in flow; no authenticated chat turn.
+- No browser-driven sign-in flow; no authenticated chat turn.
 - No WebSocket or streaming (`/api/chat/sessions/{id}/stream`) tests.
 - No Cloudflare bypass; tests accept 304 on static assets.
 - No multi-tenant cross-check.
