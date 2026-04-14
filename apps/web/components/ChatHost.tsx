@@ -33,13 +33,17 @@ export interface ChatHostProps {
 }
 
 export function ChatHost({ apiUrl, accessToken, user }: ChatHostProps): ReactElement {
+  // Nginx routes /api/* to FastAPI (stripping the prefix). The SDK's paths
+  // are bare (`/chat/sessions`), so the consumer hands it the /api-prefixed
+  // base. See deployment_runbook.md.
+  const sdkBaseUrl = apiUrl.replace(/\/+$/, "") + "/api";
   const client = useMemo(
     () =>
       new VoyagentClient({
-        baseUrl: apiUrl,
+        baseUrl: sdkBaseUrl,
         authToken: (): Promise<string> => Promise.resolve(accessToken),
       }),
-    [apiUrl, accessToken],
+    [sdkBaseUrl, accessToken],
   );
 
   return (

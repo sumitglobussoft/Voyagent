@@ -13,6 +13,10 @@ export const apiUrl = env(
   "EXPO_PUBLIC_VOYAGENT_API_URL",
   "http://localhost:8000",
 );
+// Nginx routes /api/* to FastAPI (stripping the prefix). The SDK's paths
+// are bare (`/chat/sessions`), so the consumer hands it the /api-prefixed
+// base. See deployment_runbook.md.
+export const apiBaseUrl = apiUrl.replace(/\/+$/, "") + "/api";
 export const tenantId = env("EXPO_PUBLIC_VOYAGENT_TENANT_ID", "dev-tenant");
 export const actorId = env("EXPO_PUBLIC_VOYAGENT_ACTOR_ID", "dev-user");
 
@@ -25,7 +29,7 @@ export function useVoyagentClient(): VoyagentClient {
   return useMemo(
     () =>
       new VoyagentClient({
-        baseUrl: apiUrl,
+        baseUrl: apiBaseUrl,
         authToken: async (): Promise<string> => {
           const token = await VoyagentAuth.getAccessToken();
           if (!token) {
@@ -44,5 +48,5 @@ export function useVoyagentClient(): VoyagentClient {
  * Auth-less client — used only for the pre-auth smoke check.
  */
 export function makeVoyagentClient(): VoyagentClient {
-  return new VoyagentClient({ baseUrl: apiUrl });
+  return new VoyagentClient({ baseUrl: apiBaseUrl });
 }

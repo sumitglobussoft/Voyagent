@@ -16,6 +16,10 @@ function readEnv(key: string, fallback: string): string {
 }
 
 export const apiUrl = readEnv("VITE_VOYAGENT_API_URL", "http://localhost:8000");
+// Nginx routes /api/* to FastAPI (stripping the prefix). The SDK's paths
+// are bare (`/chat/sessions`), so the consumer hands it the /api-prefixed
+// base. See deployment_runbook.md.
+export const apiBaseUrl = apiUrl.replace(/\/+$/, "") + "/api";
 export const tenantId = readEnv("VITE_VOYAGENT_TENANT_ID", "dev-tenant");
 export const actorId = readEnv("VITE_VOYAGENT_ACTOR_ID", "dev-user");
 
@@ -31,7 +35,7 @@ export function useVoyagentClient(): VoyagentClient {
   return useMemo(
     () =>
       new VoyagentClient({
-        baseUrl: apiUrl,
+        baseUrl: apiBaseUrl,
         authToken: async (): Promise<string> => {
           const token = await getToken();
           if (!token) {
