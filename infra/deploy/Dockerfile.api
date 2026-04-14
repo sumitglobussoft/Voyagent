@@ -64,7 +64,7 @@ COPY services ./services
 COPY tests    ./tests
 COPY infra    ./infra
 
-RUN uv sync --no-dev --frozen=false \
+RUN uv sync --no-dev \
         --package voyagent-api \
         --package voyagent-schemas-canonical \
         --package voyagent-schemas-storage \

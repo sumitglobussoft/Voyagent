@@ -47,7 +47,7 @@ COPY drivers ./drivers
 COPY services ./services
 COPY tests    ./tests
 
-RUN uv sync --no-dev --frozen=false \
+RUN uv sync --no-dev \
         --package voyagent-browser-runner \
         --package voyagent-schemas-canonical \
         --package voyagent-driver-contracts
