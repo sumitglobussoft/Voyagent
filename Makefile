@@ -2,7 +2,7 @@
 
 COMPOSE := docker compose -f infra/docker/dev.yml
 
-.PHONY: help install dev test lint build up down clean
+.PHONY: help install dev test lint build codegen up down clean
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "Voyagent — available targets:\n\n"} /^[a-zA-Z_-]+:.*##/ {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -21,6 +21,9 @@ lint: ## Lint JS + Python
 
 build: ## Build all JS packages/apps
 	pnpm build
+
+codegen: ## Regenerate TS types from Pydantic canonical models
+	pnpm codegen
 
 up: ## Start local dev infra (pg, redis, temporal, minio)
 	$(COMPOSE) up -d

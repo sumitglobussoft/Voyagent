@@ -1,0 +1,30 @@
+{
+  "name": "@voyagent/sdk",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Typed HTTP + SSE client for the Voyagent API. The only supported way for TS clients to talk to the backend.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "tsc --noEmit",
+    "clean": "rimraf dist"
+  },
+  "peerDependencies": {
+    "@voyagent/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@voyagent/config": "workspace:*",
+    "@voyagent/core": "workspace:*",
+    "typescript": "^5.6.0",
+    "rimraf": "^6.0.0"
+  }
+}

@@ -74,5 +74,42 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Placeholder
-        run: echo "TODO wire up once services/api emits openapi"
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Install JS deps
+        run: pnpm install --frozen-lockfile=false
+
+      - name: uv sync
+        run: uv sync --all-extras
+
+      - name: Regenerate canonical TS types
+        run: pnpm -C packages/core codegen
+
+      - name: Fail if generated.ts drifted
+        run: git diff --exit-code packages/core/src/generated.ts
+
+      - name: Upload drifted file on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-ts-drift
+          path: packages/core/src/generated.ts
