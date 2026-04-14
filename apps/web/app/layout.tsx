@@ -70,7 +70,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
                 </form>
               </>
             ) : (
-              <Link href="/app/sign-in" style={{ color: "#111" }}>
+              <Link href="/sign-in" style={{ color: "#111" }}>
                 Sign in
               </Link>
             )}

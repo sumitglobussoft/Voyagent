@@ -269,7 +269,7 @@ export async function getCurrentUser(): Promise<PublicUser | null> {
 export async function requireUser(): Promise<PublicUser> {
   const user = await getCurrentUser();
   if (!user) {
-    redirect("/app/sign-in");
+    redirect("/sign-in");
   }
   return user;
 }

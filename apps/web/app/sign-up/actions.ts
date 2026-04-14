@@ -44,5 +44,5 @@ export async function signUpAction(
     result.refresh_token,
     result.expires_in,
   );
-  redirect("/app/chat?welcome=1");
+  redirect("/chat?welcome=1");
 }

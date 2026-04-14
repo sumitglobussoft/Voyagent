@@ -14,7 +14,10 @@ export async function signInAction(
 ): Promise<SignInState> {
   const email = String(formData.get("email") ?? "").trim();
   const password = String(formData.get("password") ?? "");
-  const next = String(formData.get("next") ?? "") || "/app/chat";
+  // `next` arrives without the /app basePath because the middleware
+  // strips it before passing through. Default redirects also live under
+  // basePath so they're un-prefixed here.
+  const next = String(formData.get("next") ?? "") || "/chat";
 
   if (!email || !password) {
     return { error: "Email and password are required." };

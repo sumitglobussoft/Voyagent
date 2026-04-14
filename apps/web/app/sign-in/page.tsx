@@ -20,7 +20,7 @@ export default async function SignInPage({
   searchParams?: Promise<{ next?: string }>;
 }) {
   const params = (await searchParams) ?? {};
-  const next = params.next ?? "/app/chat";
+  const next = params.next ?? "/chat";
 
   return (
     <main
@@ -50,7 +50,7 @@ export default async function SignInPage({
         <SignInForm next={next} />
         <p style={{ marginTop: 24, fontSize: 14, color: "#555" }}>
           Don&apos;t have an account?{" "}
-          <Link href="/app/sign-up">Create one</Link>
+          <Link href="/sign-up">Create one</Link>
         </p>
       </div>
     </main>

@@ -33,7 +33,12 @@ export function middleware(req: NextRequest) {
   if (!valid) {
     const url = req.nextUrl.clone();
     url.pathname = "/app/sign-in";
-    url.searchParams.set("next", pathname);
+    // Strip the /app basePath from `next` so the sign-in action can
+    // pass it directly to redirect() — Next prepends basePath again.
+    const nextPath = pathname.startsWith("/app")
+      ? pathname.slice("/app".length) || "/chat"
+      : pathname;
+    url.searchParams.set("next", nextPath);
     return NextResponse.redirect(url);
   }
 
