@@ -42,7 +42,11 @@ def base_url() -> str:
     return BASE_URL
 
 
-@pytest_asyncio.fixture(scope="session")
+# Function-scoped: pytest-asyncio closes the per-test event loop on
+# teardown; a session-scoped httpx.AsyncClient then errors with
+# "Event loop is closed" when its connection pool tries to clean up.
+# Function scope trades some TCP setup cost for correctness.
+@pytest_asyncio.fixture(scope="function")
 async def session() -> AsyncIterator[httpx.AsyncClient]:
     async with httpx.AsyncClient(
         base_url=BASE_URL,
