@@ -1,17 +1,19 @@
 """Tenant users.
 
-Users authenticate through an upstream identity provider (Clerk in v0);
-``external_id`` is the stable id the IDP mints. ``role`` is a
-coarse-grained enum — fine-grained authorisation is enforced per tool by
-the agent runtime, not by the user row.
+Users authenticate against Voyagent's in-house auth service. The
+``password_hash`` column carries an argon2id PHC string; ``email`` is
+the primary login identifier and is therefore globally unique across
+all tenants — two tenants cannot both own a user with email
+``alice@example.com``.
 """
 
 from __future__ import annotations
 
 import enum
 import uuid
+from datetime import datetime
 
-from sqlalchemy import Enum as SAEnum, Index, String
+from sqlalchemy import Boolean, Enum as SAEnum, Index, String, TIMESTAMP, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base, Timestamps, tenant_id_fk, uuid_pk
@@ -35,9 +37,11 @@ class UserRole(str, enum.Enum):
 class User(Base, Timestamps):
     """A human user attached to a tenant.
 
-    ``external_id`` is unique per tenant — two tenants may both have a
-    user with external_id ``usr_abc`` if those happen to be distinct
-    accounts upstream.
+    ``email`` is globally unique across the whole system — it is the
+    canonical login identifier for in-house auth. ``external_id`` is
+    retained for legacy IDP-issued ids (nullable for newly self-served
+    users) so existing rows from earlier IDP-driven provisioning still
+    fit the schema.
     """
 
     __tablename__ = "users"
@@ -52,15 +56,23 @@ class User(Base, Timestamps):
         nullable=False,
         server_default=UserRole.AGENT.value,
     )
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    email_verified: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("false"),
+    )
+    last_login_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
 
     __table_args__ = (
         Index(
-            "ux_users_tenant_external",
-            "tenant_id",
-            "external_id",
+            "ux_users_email",
+            "email",
             unique=True,
         ),
-        Index("ix_users_email", "email"),
+        Index("ix_users_tenant_external", "tenant_id", "external_id"),
     )
 
 

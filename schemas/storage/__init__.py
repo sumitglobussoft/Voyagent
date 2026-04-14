@@ -13,6 +13,7 @@ Re-exports every public model plus :class:`Base` so callers can write
 from __future__ import annotations
 
 from .audit import AuditEventRow, AuditStatusEnum
+from .auth import RefreshTokenRow
 from .base import Base, Timestamps, UUIDType, tenant_id_fk, uuid7, uuid_pk
 from .credentials import (
     CredentialPayload,
@@ -53,6 +54,7 @@ __all__ = [
     "MessageRow",
     "NullKMS",
     "PendingApprovalRow",
+    "RefreshTokenRow",
     "SecurityError",
     "SessionRow",
     "Tenant",

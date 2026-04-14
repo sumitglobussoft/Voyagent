@@ -21,8 +21,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from schemas.canonical import Money
 
-from voyagent_api import chat, webhooks
+from voyagent_api import chat
 from voyagent_api.audit import record_auth_failure
+from voyagent_api.auth_inhouse.routes import router as auth_router
+from voyagent_api.auth_inhouse.settings import get_auth_settings
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +60,7 @@ app.add_middleware(
 )
 
 app.include_router(chat.router)
-app.include_router(webhooks.router)
-app.include_router(webhooks.auth_router)
+app.include_router(auth_router)
 
 
 # --------------------------------------------------------------------------- #
@@ -104,6 +105,16 @@ app.add_middleware(_AuthFailureAuditMiddleware)
 
 @app.on_event("startup")
 async def _log_runtime_status() -> None:
+    # Refuse to boot without a configured auth secret. This is loud and
+    # fast on purpose — silently falling back to a development default
+    # would be a security footgun.
+    try:
+        get_auth_settings()
+        logger.info("auth_provider=inhouse")
+    except Exception as exc:  # noqa: BLE001
+        logger.error("auth misconfigured: %s", exc)
+        raise
+
     # Dev-friendly signal that the parallel runtime work is wired in.
     if chat.runtime_available():
         logger.info("voyagent_agent_runtime imported successfully")

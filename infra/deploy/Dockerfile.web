@@ -43,14 +43,9 @@ RUN pnpm install --frozen-lockfile=false
 #########
 FROM node:20.17-bookworm-slim AS build
 
-# Build-time placeholder Clerk key. The app's layout forces dynamic
-# rendering so Clerk is never initialised during `next build`, but
-# `@clerk/nextjs`'s client entry reads the env var at module load.
-ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_Y2xlcmsucHJvZC5leGFtcGxlLmRldiQ
 ENV PNPM_HOME=/pnpm \
     PATH=/pnpm:$PATH \
     NEXT_TELEMETRY_DISABLED=1 \
-    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY} \
     CI=1
 
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
@@ -63,9 +58,7 @@ COPY --from=deps /app/packages ./packages
 
 COPY . .
 
-# Skip next lint (we lint via turbo separately; Clerk-typed-rules also
-# need parserOptions.project, which isn't wired up in the minimal v0
-# eslint config).
+# Skip next lint (we lint via turbo separately).
 RUN pnpm --filter @voyagent/core \
          --filter @voyagent/config \
          --filter @voyagent/sdk \
@@ -73,8 +66,7 @@ RUN pnpm --filter @voyagent/core \
          --filter @voyagent/ui \
          --filter @voyagent/icons \
          run build \
- && NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY} \
-    pnpm --filter @voyagent/web exec next build --no-lint
+ && pnpm --filter @voyagent/web exec next build --no-lint
 
 ##########
 # runner #

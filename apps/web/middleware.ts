@@ -1,36 +1,45 @@
 /**
- * Clerk authentication middleware for the Voyagent web app.
+ * Voyagent web app middleware.
  *
- * Gates `/chat(.*)` behind a signed-in user. The landing page (`/`) and
- * the sign-in / sign-up routes are left public so first-time visitors can
- * hit Clerk's hosted flow without a redirect loop.
+ * Gates `/app/*` behind a presence-and-expiry check on the access-token
+ * cookie. We deliberately do NOT verify the JWT signature here — that's
+ * the API's job. The middleware just needs to be fast enough to run on
+ * every authenticated request without hammering the backend.
  *
- * Anything not explicitly matched by `config.matcher` below skips
- * middleware entirely — static assets and Next internals must stay out
- * of the auth path to avoid a perf hit on every file request.
+ * Public sub-routes (`/app/sign-in`, `/app/sign-up`) are allowed through
+ * so the unauth flow can render. Anything else under `/app/*` without a
+ * non-expired access cookie is redirected to sign-in with `?next=` set
+ * to the original path.
  */
-import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { NextResponse, type NextRequest } from "next/server";
 
-const isPublicRoute = createRouteMatcher([
-  "/",
-  "/sign-in(.*)",
-  "/sign-up(.*)",
-]);
+import { ACCESS_COOKIE, jwtExpMs } from "./lib/auth-shared";
 
-const isProtectedRoute = createRouteMatcher(["/chat(.*)"]);
+export function middleware(req: NextRequest) {
+  const { pathname } = req.nextUrl;
 
-export default clerkMiddleware(async (auth, req) => {
-  if (isPublicRoute(req)) return;
-  if (isProtectedRoute(req)) {
-    await auth.protect();
+  const publicPrefixes = ["/app/sign-in", "/app/sign-up"];
+  if (publicPrefixes.some((p) => pathname.startsWith(p))) {
+    return NextResponse.next();
   }
-});
+
+  if (!pathname.startsWith("/app")) {
+    return NextResponse.next();
+  }
+
+  const at = req.cookies.get(ACCESS_COOKIE)?.value;
+  const valid = at && jwtExpMs(at) > Date.now();
+
+  if (!valid) {
+    const url = req.nextUrl.clone();
+    url.pathname = "/app/sign-in";
+    url.searchParams.set("next", pathname);
+    return NextResponse.redirect(url);
+  }
+
+  return NextResponse.next();
+}
 
 export const config = {
-  matcher: [
-    // Match everything except Next internals + static files. Mirrors
-    // Clerk's recommended matcher for App Router deployments.
-    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
-    "/(api|trpc)(.*)",
-  ],
+  matcher: ["/app/:path*"],
 };

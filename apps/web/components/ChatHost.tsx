@@ -3,66 +3,50 @@
 /**
  * Client boundary that owns the `VoyagentClient` instance.
  *
- * We can't construct a class instance inside a Server Component and hand it
- * to `<ChatWindow>` as a prop — RSC serialization requires plain JSON.
- * Instead the surrounding server page passes the plain `apiUrl` string, and
- * this client component builds the client once (memoized) and renders the
- * chat window.
- *
- * Auth: the SDK is configured with an async `authToken` getter that pulls
- * a fresh Clerk session JWT on every request. Clerk's tokens are short
- * lived (roughly 60 s) so we never cache them locally — the getter lets
- * the SDK re-read on each call.
- *
- * The `tenantId` / `actorId` props on `<ChatWindow>` are vestigial —
- * the API now derives both from the JWT and ignores the request body.
- * Until `@voyagent/chat` drops those required props we thread Clerk's
- * `orgId` / `userId` through purely to satisfy the type; nothing on the
- * server trusts them.
- *
- * TODO(voyagent-chat): update `@voyagent/chat` to read the session from
- * the API response rather than from caller-supplied props, then drop
- * these from this component.
+ * Server-rendered parent passes a snapshot of the current access token plus
+ * the resolved user so we never need to call back into the auth API from
+ * the client. When the token expires mid-session the SDK call will 401 and
+ * surface as an in-chat error — for v0 the user reloads to refresh.
  */
 import { useMemo, type ReactElement } from "react";
 
-import { useAuth } from "@clerk/nextjs";
 import { ChatWindow } from "@voyagent/chat";
 import { VoyagentClient } from "@voyagent/sdk";
 
+// We redeclare the user shape here rather than importing from `@/lib/auth`
+// because that module is `server-only` and would refuse to bundle into a
+// client component.
+export type ChatUser = {
+  id: string;
+  email: string;
+  full_name: string | null;
+  role: string;
+  tenant_id: string;
+  tenant_name: string;
+  created_at: string;
+};
+
 export interface ChatHostProps {
   apiUrl: string;
+  accessToken: string;
+  user: ChatUser;
 }
 
-export function ChatHost({ apiUrl }: ChatHostProps): ReactElement {
-  const { getToken, orgId, userId } = useAuth();
-
+export function ChatHost({ apiUrl, accessToken, user }: ChatHostProps): ReactElement {
   const client = useMemo(
     () =>
       new VoyagentClient({
         baseUrl: apiUrl,
-        authToken: async (): Promise<string> => {
-          const token = await getToken();
-          if (!token) {
-            // The page-level server guard should prevent this, but a
-            // defensive throw gives a clear error in the client console
-            // rather than surfacing as a silent 401 from the API.
-            throw new Error(
-              "Voyagent: no Clerk session token available — user is signed out.",
-            );
-          }
-          return token;
-        },
+        authToken: (): Promise<string> => Promise.resolve(accessToken),
       }),
-    [apiUrl, getToken],
+    [apiUrl, accessToken],
   );
 
-  // Vestigial props — see module docstring. The API ignores these.
   return (
     <ChatWindow
       client={client}
-      tenantId={orgId ?? "unknown-tenant"}
-      actorId={userId ?? "unknown-actor"}
+      tenantId={user.tenant_id}
+      actorId={user.id}
     />
   );
 }

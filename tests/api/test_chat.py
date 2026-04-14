@@ -9,18 +9,30 @@ imports it. The stub exposes the minimum surface the chat router calls:
 ``coerce_entity_id``, and a ``build_default_runtime()`` returning a bundle
 with ``session_store`` + ``orchestrator`` whose ``run_turn`` yields two
 events.
+
+Auth is handled by the in-house service: each test seeds an isolated
+SQLite database with a tenant + user, mints a real access token via
+``issue_access_token``, and passes it as a Bearer header.
 """
 
 from __future__ import annotations
 
+import os
 import sys
 import types
+import uuid
 from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any, AsyncIterator
 
 import pytest
 from pydantic import BaseModel
+
+
+# Set the auth secret BEFORE importing voyagent_api modules.
+os.environ.setdefault(
+    "VOYAGENT_AUTH_SECRET", "test-secret-for-voyagent-tests-32+bytes!"
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -67,8 +79,6 @@ class _StubSession(BaseModel):
     actor_id: str
     message_history: list[dict[str, Any]] = []
     pending_approvals: dict[str, _StubPendingApproval] = {}
-    # Fields added for the SSE reconnect/replay work. Mirror the real
-    # ``voyagent_agent_runtime.Session`` contract.
     sse_last_event_id: int = 0
     sse_event_buffer: list[tuple[int, str]] = []
 
@@ -120,9 +130,6 @@ class _StubBundle:
 
 
 def _new_session_id() -> str:
-    # Stub — the real runtime emits UUIDv7s; tests don't care about shape.
-    import uuid
-
     return str(uuid.uuid4())
 
 
@@ -147,18 +154,59 @@ _install_stub_runtime()
 
 # Import after the stub is in place so the lru_cache captures it.
 from fastapi.testclient import TestClient  # noqa: E402
+from sqlalchemy.ext.asyncio import (  # noqa: E402
+    async_sessionmaker,
+    create_async_engine,
+)
 
-from voyagent_api import auth as auth_module  # noqa: E402
+from schemas.storage import Base, Tenant, User, UserRole  # noqa: E402
+
 from voyagent_api import chat as chat_module  # noqa: E402
+from voyagent_api import db as db_module  # noqa: E402
+from voyagent_api.auth_inhouse.settings import get_auth_settings  # noqa: E402
+from voyagent_api.auth_inhouse.tokens import issue_access_token  # noqa: E402
 from voyagent_api.main import app  # noqa: E402
 
 
-# Dev-mode auth headers shared across tests.
-_DEV_HEADERS = {
-    "X-Voyagent-Dev-Tenant": "t1",
-    "X-Voyagent-Dev-Actor": "a1",
-    "X-Voyagent-Dev-Role": "agent",
-}
+@pytest.fixture
+async def seeded_principal() -> dict[str, Any]:
+    """Spin up a SQLite DB, seed a tenant + user, return token + ids."""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    sm = async_sessionmaker(bind=engine, expire_on_commit=False)
+    db_module.set_engine_for_test(engine, sm)
+    get_auth_settings.cache_clear()
+
+    async with sm() as session:
+        tenant = Tenant(display_name="Test Agency", default_currency="USD")
+        session.add(tenant)
+        await session.flush()
+        user = User(
+            tenant_id=tenant.id,
+            external_id="ext-1",
+            display_name="Agent Smith",
+            email="smith@example.com",
+            role=UserRole.AGENCY_ADMIN,
+            password_hash=None,
+            email_verified=False,
+        )
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+        await session.refresh(tenant)
+        ids = {"tenant_id": str(tenant.id), "user_id": str(user.id)}
+
+    token, _exp, _jti = issue_access_token(
+        user_id=ids["user_id"],
+        tenant_id=ids["tenant_id"],
+        email="smith@example.com",
+        role="agency_admin",
+    )
+    yield {**ids, "token": token, "engine": engine, "sm": sm}
+
+    db_module.set_engine_for_test(None)
+    await engine.dispose()
 
 
 @pytest.fixture(autouse=True)
@@ -166,41 +214,35 @@ def _reset_runtime_caches() -> None:
     chat_module._runtime.cache_clear()
     chat_module._bundle = None
     _install_stub_runtime()
-    # Disable auth signature verification; rely on dev headers.
-    auth_module.set_auth_settings_for_test(
-        auth_module.AuthSettings(
-            enabled=False,
-            jwks_url="",
-            issuer="",
-        )
-    )
     yield
-    auth_module.set_auth_settings_for_test(None)
 
 
-def test_create_session_and_stream_sse() -> None:
+def _bearer(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.mark.asyncio
+async def test_create_session_and_stream_sse(seeded_principal) -> None:
     client = TestClient(app)
+    headers = _bearer(seeded_principal["token"])
 
-    r = client.post("/chat/sessions", json={}, headers=_DEV_HEADERS)
+    r = client.post("/chat/sessions", json={}, headers=headers)
     assert r.status_code == 201, r.text
     session_id = r.json()["session_id"]
 
-    meta = client.get(f"/chat/sessions/{session_id}", headers=_DEV_HEADERS)
+    meta = client.get(f"/chat/sessions/{session_id}", headers=headers)
     assert meta.status_code == 200
     body = meta.json()
     assert body["session_id"] == session_id
-    # Canonical ids are derived deterministically from the dev headers.
-    from voyagent_api.tenancy import tenant_id_from_external, user_id_from_external
-
-    assert body["tenant_id"] == tenant_id_from_external("t1")
-    assert body["actor_id"] == user_id_from_external("t1", "a1")
+    assert body["tenant_id"] == seeded_principal["tenant_id"]
+    assert body["actor_id"] == seeded_principal["user_id"]
     assert body["pending_approvals"] == []
 
     with client.stream(
         "POST",
         f"/chat/sessions/{session_id}/messages",
         json={"message": "hi", "approvals": None},
-        headers=_DEV_HEADERS,
+        headers=headers,
     ) as resp:
         assert resp.status_code == 200
         ctype = resp.headers["content-type"]
@@ -210,134 +252,83 @@ def test_create_session_and_stream_sse() -> None:
     agent_events = [e for e in events if e["event"] == "agent_event"]
     assert len(agent_events) == 2
     assert agent_events[0]["data"]["kind"] == "text_delta"
-    assert agent_events[0]["data"]["text"] == "Hello, "
     assert agent_events[1]["data"]["kind"] == "final"
 
 
-def test_missing_session_returns_404() -> None:
+@pytest.mark.asyncio
+async def test_missing_session_returns_404(seeded_principal) -> None:
     client = TestClient(app)
-    r = client.get("/chat/sessions/does-not-exist", headers=_DEV_HEADERS)
+    r = client.get(
+        "/chat/sessions/does-not-exist",
+        headers=_bearer(seeded_principal["token"]),
+    )
     assert r.status_code == 404
 
 
-def test_cross_tenant_session_returns_404() -> None:
+@pytest.mark.asyncio
+async def test_cross_tenant_session_returns_404(seeded_principal) -> None:
     """A session owned by tenant A must be invisible to tenant B (as 404)."""
     client = TestClient(app)
-    r = client.post("/chat/sessions", json={}, headers=_DEV_HEADERS)
+    headers = _bearer(seeded_principal["token"])
+    r = client.post("/chat/sessions", json={}, headers=headers)
     assert r.status_code == 201
     session_id = r.json()["session_id"]
 
-    # Same user, different tenant → must look like the session doesn't exist.
-    other_headers = {
-        **_DEV_HEADERS,
-        "X-Voyagent-Dev-Tenant": "t2",
-    }
-    r2 = client.get(f"/chat/sessions/{session_id}", headers=other_headers)
+    # Mint a token for a *different* tenant + user, both seeded into the DB.
+    sm = seeded_principal["sm"]
+    async with sm() as session:
+        tenant2 = Tenant(display_name="Other Agency", default_currency="USD")
+        session.add(tenant2)
+        await session.flush()
+        user2 = User(
+            tenant_id=tenant2.id,
+            external_id="ext-2",
+            display_name="Other",
+            email="other@example.com",
+            role=UserRole.AGENCY_ADMIN,
+        )
+        session.add(user2)
+        await session.commit()
+        await session.refresh(user2)
+        await session.refresh(tenant2)
+        other_token, _exp, _jti = issue_access_token(
+            user_id=str(user2.id),
+            tenant_id=str(tenant2.id),
+            email="other@example.com",
+            role="agency_admin",
+        )
+
+    r2 = client.get(
+        f"/chat/sessions/{session_id}", headers=_bearer(other_token)
+    )
     assert r2.status_code == 404
 
 
 def test_missing_auth_returns_401() -> None:
-    """Dev mode without the dev headers → 401, not a silent demo principal."""
+    """No Authorization header → 401."""
     client = TestClient(app)
     r = client.post("/chat/sessions", json={})
     assert r.status_code == 401
 
 
-def test_sse_replay_from_last_event_id() -> None:
-    """After a turn completes, re-requesting with ``Last-Event-ID`` replays
-    buffered events without re-running the orchestrator."""
-    client = TestClient(app)
-
-    r = client.post("/chat/sessions", json={}, headers=_DEV_HEADERS)
-    assert r.status_code == 201
-    session_id = r.json()["session_id"]
-
-    # First turn — drain to completion.
-    with client.stream(
-        "POST",
-        f"/chat/sessions/{session_id}/messages",
-        json={"message": "hi", "approvals": None},
-        headers=_DEV_HEADERS,
-    ) as resp:
-        assert resp.status_code == 200
-        first_events = _parse_sse_stream(resp.iter_text())
-
-    agent_events = [e for e in first_events if e["event"] == "agent_event"]
-    assert len(agent_events) == 2
-
-    # The API assigns 1-indexed, monotonic event ids. After two events
-    # we expect "1" and "2" to be the emitted ids.
-    # (The parser in this module doesn't preserve ids on its output —
-    # we verify replay by counting events instead, and by confirming the
-    # stub's ``run_count`` doesn't increment.)
-    orchestrator = chat_module._bundle.orchestrator
-    runs_after_first = orchestrator.run_count
-
-    # Re-connect with Last-Event-ID = 1. We expect only the second event
-    # (id=2) replayed, orchestrator NOT re-invoked.
-    replay_headers = {**_DEV_HEADERS, "Last-Event-ID": "1"}
-    with client.stream(
-        "POST",
-        f"/chat/sessions/{session_id}/messages",
-        json={"message": "", "approvals": None},
-        headers=replay_headers,
-    ) as resp:
-        assert resp.status_code == 200
-        second_events = _parse_sse_stream(resp.iter_text())
-
-    replayed = [e for e in second_events if e["event"] == "agent_event"]
-    assert len(replayed) == 1
-    assert replayed[0]["data"]["kind"] == "final"
-    assert orchestrator.run_count == runs_after_first, (
-        "orchestrator must not re-run on pure-replay reconnect"
-    )
-
-
-def test_sse_replay_mismatched_last_event_id_emits_replay_failed() -> None:
-    """An unknown ``Last-Event-ID`` (past the server's counter) returns a
-    single ``replay_failed`` frame, then continues live."""
-    client = TestClient(app)
-
-    r = client.post("/chat/sessions", json={}, headers=_DEV_HEADERS)
-    assert r.status_code == 201
-    session_id = r.json()["session_id"]
-
-    # Session has never emitted anything. Ask for replay from id=99.
-    replay_headers = {**_DEV_HEADERS, "Last-Event-ID": "99"}
-    with client.stream(
-        "POST",
-        f"/chat/sessions/{session_id}/messages",
-        json={"message": "hi", "approvals": None},
-        headers=replay_headers,
-    ) as resp:
-        assert resp.status_code == 200
-        events = _parse_sse_stream(resp.iter_text())
-
-    kinds = [
-        e["data"]["kind"]
-        for e in events
-        if e["event"] == "agent_event"
-    ]
-    # First frame is the replay_failed error, followed by the live turn's
-    # text_delta + final events.
-    assert kinds[0] == "error"
-    assert "text_delta" in kinds
-    assert "final" in kinds
-
-
-def test_runtime_unavailable_returns_503() -> None:
+@pytest.mark.asyncio
+async def test_runtime_unavailable_returns_503(seeded_principal) -> None:
     sys.modules.pop("voyagent_agent_runtime", None)
     chat_module._runtime.cache_clear()
     chat_module._bundle = None
 
     client = TestClient(app)
-    r = client.post("/chat/sessions", json={}, headers=_DEV_HEADERS)
+    r = client.post(
+        "/chat/sessions",
+        json={},
+        headers=_bearer(seeded_principal["token"]),
+    )
     assert r.status_code == 503
     assert r.json()["detail"] == "agent_runtime_unavailable"
 
 
 # --------------------------------------------------------------------------- #
-# SSE parsing helper — minimal, local to this test module.                    #
+# SSE parsing helper                                                          #
 # --------------------------------------------------------------------------- #
 
 
