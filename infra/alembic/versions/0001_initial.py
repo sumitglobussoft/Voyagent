@@ -109,7 +109,10 @@ def upgrade() -> None:
         "agent",
         "viewer",
         name="user_role",
-        create_type=True,
+        # Already created via explicit .create() below; passing
+        # create_type=False prevents SQLAlchemy from emitting a second
+        # CREATE TYPE when this enum is referenced by op.create_table.
+        create_type=False,
     )
     user_role.create(op.get_bind(), checkfirst=True)
 
@@ -155,7 +158,7 @@ def upgrade() -> None:
 
     # ----- sessions ------------------------------------------------------ #
     actor_kind = postgresql.ENUM(
-        "human", "agent", "system", name="actor_kind", create_type=True
+        "human", "agent", "system", name="actor_kind", create_type=False
     )
     actor_kind.create(op.get_bind(), checkfirst=True)
 
@@ -258,7 +261,7 @@ def upgrade() -> None:
         "rejected",
         "cancelled",
         name="audit_status",
-        create_type=True,
+        create_type=False,
     )
     audit_status.create(op.get_bind(), checkfirst=True)
 
