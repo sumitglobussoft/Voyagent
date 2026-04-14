@@ -16,6 +16,8 @@ from pydantic import ValidationError
 
 from schemas.canonical import (
     Address,
+    BSPTransaction,
+    BSPTransactionKind,
     Invoice,
     InvoiceLine,
     JournalEntry,
@@ -358,3 +360,39 @@ class TestReconciliation:
         assert recon.scope is ReconciliationScope.BSP
         assert recon.source == "bsp_india"
         assert recon.summary.matched_count == 0
+
+
+# --------------------------------------------------------------------------- #
+# BSPTransaction                                                              #
+# --------------------------------------------------------------------------- #
+
+
+class TestBSPTransaction:
+    def test_exchange_kind_constructs_with_signed_amount(self) -> None:
+        """``EXCHANGE`` transactions can carry either sign on ``net``.
+
+        A re-fare that credits the passenger back is negative; a re-fare
+        that collects more is positive. The canonical model stores the
+        sign untouched so downstream aggregation matches the BSP control
+        totals.
+        """
+        tx = BSPTransaction(
+            kind=BSPTransactionKind.EXCHANGE,
+            document_number="176-7777777777",
+            issue_date=date(2026, 4, 14),
+            airline="AI",
+            gross=Money(amount=Decimal("1200.00"), currency="INR"),
+            net=Money(amount=Decimal("1200.00"), currency="INR"),
+        )
+        assert tx.kind is BSPTransactionKind.EXCHANGE
+        assert tx.net.amount == Decimal("1200.00")
+
+        refund_shaped = BSPTransaction(
+            kind=BSPTransactionKind.EXCHANGE,
+            document_number="176-8888888888",
+            issue_date=date(2026, 4, 14),
+            airline="AI",
+            gross=Money(amount=Decimal("-500.00"), currency="INR"),
+            net=Money(amount=Decimal("-500.00"), currency="INR"),
+        )
+        assert refund_shaped.net.amount == Decimal("-500.00")

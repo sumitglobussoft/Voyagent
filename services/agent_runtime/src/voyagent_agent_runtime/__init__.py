@@ -12,6 +12,12 @@ from .domain_agents import DomainAgent, DomainAgentRequest, TicketingVisaAgent
 from .drivers import DriverRegistry, build_default_registry
 from .events import AgentEvent, AgentEventKind
 from .orchestrator import HandoffResolver, Orchestrator
+from .passenger_resolver import (
+    InMemoryPassengerResolver,
+    PASSENGER_RESOLVER_KEY,
+    StoragePassengerResolver,
+    build_passenger_resolver,
+)
 from .tenant_registry import (
     CredentialResolver,
     EnvCredentialResolver,
@@ -31,6 +37,7 @@ from .session import (
     InMemorySessionStore,
     Message,
     PendingApproval,
+    SSE_REPLAY_BUFFER_CAP,
     Session,
     SessionStore,
 )
@@ -66,10 +73,15 @@ __all__ = [
     "TenantRegistry",
     "default_credential_resolver",
     "InMemoryAuditSink",
+    "InMemoryPassengerResolver",
     "InMemorySessionStore",
     "Message",
     "Orchestrator",
+    "PASSENGER_RESOLVER_KEY",
     "PendingApproval",
+    "StoragePassengerResolver",
+    "build_passenger_resolver",
+    "SSE_REPLAY_BUFFER_CAP",
     "Session",
     "SessionStore",
     "Settings",

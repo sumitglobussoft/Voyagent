@@ -4,6 +4,17 @@ React chat UI for the Voyagent agent runtime. Renders an accessible
 streaming-agent transcript with human-in-the-loop approval prompts, backed
 by `@voyagent/sdk`.
 
+Ships **two builds**:
+
+- **Web** (`dist/index.js`) — the DOM + Tailwind variant consumed by
+  `apps/web` and `apps/desktop`.
+- **React Native** (`dist/index.native.js`) — the `View` / `FlatList` /
+  `TextInput` variant consumed by `apps/mobile`.
+
+Both builds expose the same public surface — `ChatWindow`, `MessageList`,
+`ComposerBar`, `ToolCallCard`, `ApprovalPrompt`, and the `useAgentStream`
+hook — so hosts don't branch on platform.
+
 ## Install
 
 Workspace-linked from the monorepo root:
@@ -15,9 +26,36 @@ Workspace-linked from the monorepo root:
 }
 ```
 
-Peer deps: `react@^19`, `react-dom@^19`.
+Peer deps:
 
-## Minimum markup
+- `react@^19`
+- `react-dom@^19` (optional; only needed on web)
+- `react-native@*` (optional; only needed on native)
+
+## Platform resolution
+
+`package.json#exports` uses conditional subpath exports:
+
+```json
+{
+  ".": {
+    "types": "./dist/index.d.ts",
+    "react-native": "./dist/index.native.js",
+    "default": "./dist/index.js"
+  }
+}
+```
+
+Metro picks `dist/index.native.js` via the `react-native` condition;
+everything else (Vite, Next.js, Node) falls through to `dist/index.js`.
+That web entry imports from `*.web.js` component files, the native entry
+imports from `*.native.js` — a single `tsc -p tsconfig.build.json` pass
+compiles both entries out of the same `src/` tree.
+
+The hook (`useAgentStream`) and the types are platform-agnostic and
+shared verbatim between the two entries.
+
+## Minimum markup (web)
 
 ```tsx
 "use client";
@@ -41,30 +79,38 @@ export default function ChatPage() {
 }
 ```
 
-`<ChatWindow>` handles session creation on mount if you don't pass
-`sessionId`.
-
-## Host with your own layout
-
-Use the `useAgentStream` hook and compose the primitives yourself:
+## Minimum markup (React Native)
 
 ```tsx
-"use client";
-import { useAgentStream, MessageList, ComposerBar, ApprovalPrompt } from "@voyagent/chat";
+import { ChatWindow } from "@voyagent/chat";
+import { View } from "react-native";
+import { useVoyagentClient } from "../lib/sdk";
 
-export function MyChat({ client, sessionId }: { client: VoyagentClient; sessionId: string }) {
-  const s = useAgentStream({ client, sessionId });
+export default function ChatScreen() {
+  const client = useVoyagentClient();
   return (
-    <>
-      <MessageList messages={s.messages} />
-      {s.pendingApprovals[0] ? (
-        <ApprovalPrompt approval={s.pendingApprovals[0]} busy={s.isStreaming} onRespond={s.respondToApproval} />
-      ) : null}
-      <ComposerBar disabled={s.isStreaming} onSubmit={(t) => s.send(t)} />
-    </>
+    <View style={{ flex: 1 }}>
+      <ChatWindow client={client} tenantId="demo-tenant" actorId="demo-actor" />
+    </View>
   );
 }
 ```
+
+`<ChatWindow>` handles session creation on mount if you don't pass
+`sessionId`.
+
+## Prop parity
+
+The component props are identical on both platforms — same names, same
+types. Only the rendering primitives and styling layer differ:
+
+| Surface          | Web                             | Native                               |
+| ---------------- | ------------------------------- | ------------------------------------ |
+| `ChatWindow`     | `div`, Tailwind                 | `View` + `KeyboardAvoidingView`      |
+| `MessageList`    | `div` + `scrollIntoView`        | `FlatList` + `scrollToEnd`           |
+| `ComposerBar`    | `<textarea>` + Cmd/Ctrl+Enter   | `TextInput` + `returnKeyType="send"` |
+| `ApprovalPrompt` | `role="alertdialog"` + autofocus | `accessibilityViewIsModal`           |
+| `ToolCallCard`   | `<button>` + `<pre>`            | `Pressable` + horizontal `ScrollView`|
 
 ## Approval flow
 
@@ -76,19 +122,22 @@ and the orchestrator resumes the turn.
 
 ## Accessibility
 
-- Message list uses `role="log"` + `aria-live="polite"` so screen readers
-  announce streaming text without stealing focus.
-- Approval prompts render inside `role="alertdialog"` and autofocus the
-  Approve button on mount; Tab reaches Deny.
-- All interactive controls are real `<button>` / `<textarea>` elements and
-  respond to keyboard activation (Enter/Space / Cmd+Enter to send).
+- Message list uses `role="log"` (web) / `accessibilityRole="list"` (native)
+  with a polite live region so streaming text is announced without stealing
+  focus.
+- Approval prompts announce via `role="alertdialog"` on web and
+  `accessibilityViewIsModal` on native.
+- Every native touchable has `accessibilityLabel`; `TextInput` has
+  `accessibilityHint`.
 - The composer is disabled while streaming or when approvals are pending —
-  `disabled` state is reflected both visually and via the `disabled`
-  attribute so assistive tech skips it.
+  that state is exposed both visually and via `disabled` / `editable`.
 
 ## Styling
 
-Components ship with minimal Tailwind utility classes. Host apps are
-expected to have Tailwind configured (see `packages/config/tailwind/preset`).
-If you don't use Tailwind, import `@voyagent/chat/styles.css` for baseline
-layout styles and override as needed.
+- Web: minimal Tailwind utility classes. Host apps are expected to have
+  Tailwind configured (see `packages/config/tailwind/preset`). Import
+  `@voyagent/chat/styles.css` for baseline layout if you don't use
+  Tailwind.
+- Native: plain `StyleSheet.create`. No runtime styling dependency. The
+  mobile build trades visual parity for reliability; dial it in later
+  when the design system lands on native.

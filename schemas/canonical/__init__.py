@@ -8,6 +8,11 @@ See docs/CANONICAL_MODEL.md for design rationale and docs/DECISIONS.md for
 the architectural choices these models encode (D2, D8, D9, D10).
 """
 
+from .airports import (
+    IATA_TIMEZONE,
+    apply_airport_timezone,
+    resolve_airport_tz,
+)
 from .finance import (
     AccountType,
     BSPReport,
@@ -94,6 +99,10 @@ from .travel import (
 )
 
 __all__ = [
+    # airports
+    "IATA_TIMEZONE",
+    "apply_airport_timezone",
+    "resolve_airport_tz",
     # primitives
     "Address",
     "CountryCode",

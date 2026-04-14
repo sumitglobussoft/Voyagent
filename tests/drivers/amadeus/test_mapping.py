@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -34,9 +35,11 @@ def _uuid7_like() -> str:
 
 
 def test_segment_maps_core_fields() -> None:
+    # BOM 14:30 IST (UTC+5:30) -> 09:00 UTC
+    # DXB 15:45 GST (UTC+4)    -> 11:45 UTC
     seg = {
-        "departure": {"iataCode": "BOM", "at": "2026-05-10T09:00:00"},
-        "arrival": {"iataCode": "DXB", "at": "2026-05-10T10:30:00"},
+        "departure": {"iataCode": "BOM", "at": "2026-04-14T14:30:00"},
+        "arrival": {"iataCode": "DXB", "at": "2026-04-14T15:45:00"},
         "carrierCode": "EK",
         "number": "507",
         "aircraft": {"code": "77W"},
@@ -52,8 +55,36 @@ def test_segment_maps_core_fields() -> None:
     assert result.flight_number == "507"
     assert result.aircraft == "77W"
     assert result.cabin == CabinClass.ECONOMY
-    assert result.departure_at == datetime(2026, 5, 10, 9, 0, tzinfo=timezone.utc)
-    assert result.arrival_at == datetime(2026, 5, 10, 10, 30, tzinfo=timezone.utc)
+    assert result.departure_at == datetime(2026, 4, 14, 9, 0, tzinfo=timezone.utc)
+    assert result.arrival_at == datetime(2026, 4, 14, 11, 45, tzinfo=timezone.utc)
+
+
+def test_segment_unknown_airport_falls_back_to_utc_with_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An airport that isn't in the curated registry must not abort the offer.
+
+    We expect a single WARNING breadcrumb with ``tz_resolved=False`` and
+    UTC pinning on the affected field.
+    """
+    seg = {
+        # ZZZ is deliberately outside the curated registry.
+        "departure": {"iataCode": "ZZZ", "at": "2026-04-14T09:00:00"},
+        "arrival": {"iataCode": "DXB", "at": "2026-04-14T11:45:00"},
+        "carrierCode": "EK",
+        "number": "999",
+    }
+    with caplog.at_level(logging.WARNING, logger="drivers.amadeus.mapping"):
+        result = amadeus_segment_to_flight_segment(seg, _uuid7_like())
+    # Unknown-origin falls back to UTC.
+    assert result.departure_at == datetime(2026, 4, 14, 9, 0, tzinfo=timezone.utc)
+    # Known destination still converts correctly (DXB = UTC+4).
+    assert result.arrival_at == datetime(2026, 4, 14, 7, 45, tzinfo=timezone.utc)
+    # Breadcrumb must be present.
+    assert any(
+        "tz_resolved=False" in rec.getMessage() and "ZZZ" in rec.getMessage()
+        for rec in caplog.records
+    )
 
 
 def test_segment_missing_required_raises_validation() -> None:

@@ -13,6 +13,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from schemas.canonical import ActorKind, EntityId
 
+# Maximum per-session SSE replay buffer. Sized for long-running turns
+# that can emit tool_use / tool_result / text_delta events in the
+# hundreds; 200 entries fits a typical 8-tool turn with comfortable
+# headroom.
+SSE_REPLAY_BUFFER_CAP: int = 200
+
 
 def _runtime_config() -> ConfigDict:
     return ConfigDict(
@@ -69,6 +75,16 @@ class Session(BaseModel):
     actor_kind: ActorKind = ActorKind.HUMAN
     message_history: list[Message] = Field(default_factory=list)
     pending_approvals: dict[str, PendingApproval] = Field(default_factory=dict)
+    # Monotonic per-session counter for SSE frame ids. Incremented every
+    # time the chat stream emits an ``agent_event`` frame so reconnecting
+    # clients can resume via the ``Last-Event-ID`` header. Not persisted
+    # to Postgres in v0 — it lives on the in-process Session only.
+    sse_last_event_id: int = 0
+    # Rolling buffer of recently-emitted SSE frames for replay on
+    # reconnect. Each entry is ``(event_id, payload_json)``. Capped at
+    # :data:`SSE_REPLAY_BUFFER_CAP` — older frames are dropped. Also
+    # non-persistent.
+    sse_event_buffer: list[tuple[int, str]] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
 
@@ -133,6 +149,7 @@ __all__ = [
     "InMemorySessionStore",
     "Message",
     "PendingApproval",
+    "SSE_REPLAY_BUFFER_CAP",
     "Session",
     "SessionStore",
 ]

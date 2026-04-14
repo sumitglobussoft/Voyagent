@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 import httpx
 import pytest
 import respx
+from pydantic import SecretStr
 
 from drivers._contracts.errors import (
     AuthenticationError,
@@ -15,21 +16,77 @@ from drivers._contracts.errors import (
     PermanentError,
     RateLimitError,
     TransientError,
+    ValidationFailedError,
 )
 from drivers._contracts.fare_search import FareSearchCriteria
 from drivers.amadeus.driver import AmadeusDriver
-from schemas.canonical import PassengerType
+from schemas.canonical import (
+    Email,
+    Gender,
+    Passenger,
+    PassengerType,
+    Passport,
+    Phone,
+)
 
 pytestmark = pytest.mark.asyncio
 
 
-def _criteria() -> FareSearchCriteria:
-    return FareSearchCriteria(
+def _criteria(**overrides) -> FareSearchCriteria:
+    base = dict(
         passengers={PassengerType.ADULT: 1},
         origin="BOM",
         destination="DXB",
         outbound_date=date(2026, 5, 10),
     )
+    base.update(overrides)
+    return FareSearchCriteria(**base)
+
+
+def _make_passenger(
+    *,
+    passenger_id: str,
+    tenant_id: str,
+    with_passport: bool = True,
+    with_dob: bool = True,
+) -> Passenger:
+    now = datetime(2026, 4, 14, 0, 0, tzinfo=timezone.utc)
+    passport = None
+    if with_passport:
+        passport = Passport(
+            number=SecretStr("Z1234567"),
+            issuing_country="IN",
+            given_name="JANE",
+            family_name="DOE",
+            date_of_birth=date(1990, 1, 15),
+            gender=Gender.FEMALE,
+            issue_date=date(2020, 1, 1),
+            expiry_date=date(2030, 1, 1),
+            place_of_birth="MUMBAI",
+        )
+    return Passenger(
+        id=passenger_id,
+        tenant_id=tenant_id,
+        type=PassengerType.ADULT,
+        given_name="Jane",
+        family_name="Doe",
+        date_of_birth=date(1990, 1, 15) if with_dob else None,
+        gender=Gender.FEMALE,
+        nationality="IN",
+        passport=passport,
+        phones=[Phone(e164="+919876543210", label="mobile")],
+        emails=[Email(address="jane@example.com")],
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def _build_resolver(passenger: Passenger):
+    from voyagent_agent_runtime.passenger_resolver import (
+        InMemoryPassengerResolver,
+    )
+
+    return InMemoryPassengerResolver({passenger.id: passenger})
 
 
 # --------------------------------------------------------------------------- #
@@ -76,24 +133,36 @@ async def test_void_ticket_raises_not_supported(amadeus_driver: AmadeusDriver) -
 
 async def test_create_raises_permanent_error_when_cache_empty(
     amadeus_driver: AmadeusDriver,
+    tenant_id: str,
 ) -> None:
     """Without a cached offer, ``create`` must fail fast with a clear hint."""
     from voyagent_agent_runtime.offer_cache import InMemoryOfferCache
 
     amadeus_driver._offer_cache = InMemoryOfferCache()
+    passenger_id = "00000000-0000-7000-8000-000000000002"
+    amadeus_driver._passenger_resolver = _build_resolver(
+        _make_passenger(passenger_id=passenger_id, tenant_id=tenant_id)
+    )
     with pytest.raises(PermanentError) as exc:
         await amadeus_driver.create(
             fare_ids=["00000000-0000-7000-8000-000000000001"],
-            passenger_ids=["00000000-0000-7000-8000-000000000002"],
+            passenger_ids=[passenger_id],
         )
     assert "offer_expired_or_not_cached" in str(exc.value)
 
 
 async def test_create_raises_permanent_error_when_no_cache_configured(
     amadeus_driver: AmadeusDriver,
+    tenant_id: str,
 ) -> None:
     """A driver without an offer cache cannot book at all."""
     amadeus_driver._offer_cache = None
+    amadeus_driver._passenger_resolver = _build_resolver(
+        _make_passenger(
+            passenger_id="00000000-0000-7000-8000-000000000002",
+            tenant_id=tenant_id,
+        )
+    )
     with pytest.raises(PermanentError) as exc:
         await amadeus_driver.create(
             fare_ids=["00000000-0000-7000-8000-000000000001"],
@@ -102,9 +171,26 @@ async def test_create_raises_permanent_error_when_no_cache_configured(
     assert "offer cache" in str(exc.value).lower()
 
 
+async def test_create_raises_when_no_passenger_resolver_configured(
+    amadeus_driver: AmadeusDriver,
+) -> None:
+    """A driver without a resolver can't build real traveler blocks."""
+    from voyagent_agent_runtime.offer_cache import InMemoryOfferCache
+
+    amadeus_driver._offer_cache = InMemoryOfferCache()
+    amadeus_driver._passenger_resolver = None
+    with pytest.raises(PermanentError) as exc:
+        await amadeus_driver.create(
+            fare_ids=["00000000-0000-7000-8000-000000000001"],
+            passenger_ids=["00000000-0000-7000-8000-000000000002"],
+        )
+    assert "passenger_resolver" in str(exc.value).lower()
+
+
 @respx.mock
 async def test_create_uses_cached_offer_and_posts_expected_body(
     amadeus_driver: AmadeusDriver,
+    tenant_id: str,
     sample_token_response: dict,
     sample_order_response: dict,
 ) -> None:
@@ -116,6 +202,9 @@ async def test_create_uses_cached_offer_and_posts_expected_body(
 
     fare_id = "00000000-0000-7000-8000-0000000000aa"
     passenger_id = "00000000-0000-7000-8000-0000000000bb"
+    amadeus_driver._passenger_resolver = _build_resolver(
+        _make_passenger(passenger_id=passenger_id, tenant_id=tenant_id)
+    )
     # Build a plausible cached offer. Deadline far in the future so we
     # skip the reprice path and land straight on /v1/booking/flight-orders.
     cached_offer = {
@@ -325,3 +414,171 @@ async def test_cancel_calls_delete_then_read(
     pnr = await amadeus_driver.cancel(order_id)
     assert delete_route.called
     assert pnr.source == "amadeus"
+
+
+# --------------------------------------------------------------------------- #
+# PassengerResolver integration                                               #
+# --------------------------------------------------------------------------- #
+
+
+@respx.mock
+async def test_create_uses_passenger_resolver_to_build_travelers(
+    amadeus_driver: AmadeusDriver,
+    tenant_id: str,
+    sample_token_response: dict,
+    sample_order_response: dict,
+) -> None:
+    """The Amadeus ``travelers`` block is built from canonical Passenger data."""
+    from voyagent_agent_runtime.offer_cache import InMemoryOfferCache
+
+    cache = InMemoryOfferCache()
+    amadeus_driver._offer_cache = cache
+
+    fare_id = "00000000-0000-7000-8000-0000000000cc"
+    passenger_id = "00000000-0000-7000-8000-0000000000dd"
+    passenger = _make_passenger(passenger_id=passenger_id, tenant_id=tenant_id)
+    amadeus_driver._passenger_resolver = _build_resolver(passenger)
+
+    cached_offer = {
+        "type": "flight-offer",
+        "id": "offer-99",
+        "lastTicketingDateTime": "2099-01-01T00:00:00",
+        "price": {"currency": "USD", "total": "345.60", "base": "300.00"},
+        "travelerPricings": [
+            {"travelerId": "1",
+             "price": {"currency": "USD", "total": "345.60", "base": "300.00"}},
+        ],
+    }
+    await cache.put(f"amadeus:fare:{fare_id}", cached_offer, ttl_seconds=600)
+
+    base = amadeus_driver._config.api_base.rstrip("/")
+    respx.post(f"{base}/v1/security/oauth2/token").mock(
+        return_value=httpx.Response(200, json=sample_token_response)
+    )
+    booking_route = respx.post(f"{base}/v1/booking/flight-orders").mock(
+        return_value=httpx.Response(201, json=sample_order_response)
+    )
+
+    await amadeus_driver.create(
+        fare_ids=[fare_id],
+        passenger_ids=[passenger_id],
+    )
+
+    import json as _json
+
+    sent = _json.loads(booking_route.calls.last.request.content)
+    travelers = sent["data"]["travelers"]
+    assert len(travelers) == 1
+    tr = travelers[0]
+    assert tr["id"] == "1"
+    assert tr["dateOfBirth"] == "1990-01-15"
+    # Passport MRZ wins over passenger preferred name.
+    assert tr["name"] == {"firstName": "JANE", "lastName": "DOE"}
+    assert tr["gender"] == "FEMALE"
+    assert tr["meta"]["voyagent_passenger_id"] == passenger_id
+    # Passport document round-trips.
+    docs = tr["documents"]
+    assert len(docs) == 1
+    assert docs[0]["documentType"] == "PASSPORT"
+    assert docs[0]["number"] == "Z1234567"
+    assert docs[0]["issuanceCountry"] == "IN"
+    assert docs[0]["nationality"] == "IN"
+    assert docs[0]["expiryDate"] == "2030-01-01"
+    # Contact.
+    assert tr["contact"]["emailAddress"] == "jane@example.com"
+    assert tr["contact"]["phones"][0]["countryCallingCode"] == "91"
+    assert tr["contact"]["phones"][0]["number"] == "9876543210"
+
+
+async def test_create_raises_when_passenger_missing_dob(
+    amadeus_driver: AmadeusDriver,
+    tenant_id: str,
+) -> None:
+    """A passenger missing ``date_of_birth`` is a hard ValidationFailedError."""
+    from voyagent_agent_runtime.offer_cache import InMemoryOfferCache
+
+    cache = InMemoryOfferCache()
+    amadeus_driver._offer_cache = cache
+
+    fare_id = "00000000-0000-7000-8000-0000000000ee"
+    passenger_id = "00000000-0000-7000-8000-0000000000ff"
+    pax = _make_passenger(
+        passenger_id=passenger_id,
+        tenant_id=tenant_id,
+        with_dob=False,
+        with_passport=False,
+    )
+    amadeus_driver._passenger_resolver = _build_resolver(pax)
+
+    cached_offer = {
+        "id": "offer-1",
+        "lastTicketingDateTime": "2099-01-01T00:00:00",
+        "travelerPricings": [],
+    }
+    await cache.put(f"amadeus:fare:{fare_id}", cached_offer, ttl_seconds=600)
+
+    with pytest.raises(ValidationFailedError) as exc:
+        await amadeus_driver.create(
+            fare_ids=[fare_id],
+            passenger_ids=[passenger_id],
+        )
+    assert "date_of_birth" in str(exc.value)
+
+
+# --------------------------------------------------------------------------- #
+# search pagination                                                           #
+# --------------------------------------------------------------------------- #
+
+
+@respx.mock
+async def test_search_honors_max_results(
+    amadeus_driver: AmadeusDriver,
+    sample_token_response: dict,
+    sample_search_response: dict,
+) -> None:
+    """``FareSearchCriteria.max_results`` propagates to the ``max`` query param."""
+    base = amadeus_driver._config.api_base.rstrip("/")
+    respx.post(f"{base}/v1/security/oauth2/token").mock(
+        return_value=httpx.Response(200, json=sample_token_response)
+    )
+    search_route = respx.get(f"{base}/v2/shopping/flight-offers").mock(
+        return_value=httpx.Response(200, json=sample_search_response)
+    )
+
+    fares = await amadeus_driver.search(_criteria(max_results=100))
+
+    assert search_route.called
+    sent_params = dict(search_route.calls.last.request.url.params)
+    assert sent_params["max"] == "100"
+    assert len(fares) <= 100
+
+
+async def test_search_rejects_max_results_above_250(
+    amadeus_driver: AmadeusDriver,
+) -> None:
+    """Validation in ``FareSearchCriteria`` rejects anything above 250."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        _criteria(max_results=500)
+
+
+@respx.mock
+async def test_search_default_max_results_is_50(
+    amadeus_driver: AmadeusDriver,
+    sample_token_response: dict,
+    sample_search_response: dict,
+) -> None:
+    """Existing callers that don't set ``max_results`` keep the old behaviour."""
+    base = amadeus_driver._config.api_base.rstrip("/")
+    respx.post(f"{base}/v1/security/oauth2/token").mock(
+        return_value=httpx.Response(200, json=sample_token_response)
+    )
+    search_route = respx.get(f"{base}/v2/shopping/flight-offers").mock(
+        return_value=httpx.Response(200, json=sample_search_response)
+    )
+
+    await amadeus_driver.search(_criteria())
+
+    sent_params = dict(search_route.calls.last.request.url.params)
+    assert sent_params["max"] == "50"

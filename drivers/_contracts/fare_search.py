@@ -61,6 +61,17 @@ class FareSearchCriteria(BaseModel):
         default=None,
         description="Hard upper bound on total fare. Driver filters before returning.",
     )
+    max_results: int = Field(
+        default=50,
+        ge=1,
+        le=250,
+        description=(
+            "Maximum number of offers the driver should return. Defaults to "
+            "50; the ceiling of 250 reflects the Amadeus Self-Service hard "
+            "cap. Other drivers should honour the value within their own "
+            "vendor constraints."
+        ),
+    )
 
     @model_validator(mode="after")
     def _validate(self) -> FareSearchCriteria:

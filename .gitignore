@@ -49,10 +49,15 @@ Cargo.lock
 .env
 .env.*
 !.env.example
+local.env
+*.local.env
 *.pem
 *.key
 credentials*.json
 secrets*.json
+# SSH / deploy artifacts
+ansible/vault.yml
+infra/deploy/secrets/
 
 # Logs
 *.log

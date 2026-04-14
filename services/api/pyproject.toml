@@ -14,9 +14,15 @@ dependencies = [
     "sqlalchemy>=2.0",
     "asyncpg>=0.29",
     "redis[hiredis]>=5.0",
+    "svix>=1.39",
+    "cryptography>=42",
     "voyagent-schemas-canonical",
+    "voyagent-schemas-storage",
     "voyagent-agent-runtime",
 ]
+
+[tool.uv.sources.voyagent-schemas-storage]
+workspace = true
 
 [project.scripts]
 voyagent-api = "voyagent_api.main:cli"

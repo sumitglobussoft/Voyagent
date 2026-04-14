@@ -1,0 +1,35 @@
+[project]
+name = "voyagent-driver-vfs"
+version = "0.1.0"
+description = "Voyagent VFS Global driver — reference browser-based VisaPortalDriver."
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.7",
+    "pydantic-settings>=2.4",
+    "voyagent-schemas-canonical",
+    "voyagent-driver-contracts",
+    "voyagent-browser-runner",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# Mirrors the force-include pattern from drivers/amadeus so the runtime
+# import path stays `drivers.vfs`.
+[tool.hatch.build.targets.wheel]
+packages = []
+
+[tool.hatch.build.targets.wheel.force-include]
+"." = "voyagent_driver_vfs"
+
+[tool.uv.sources]
+voyagent-schemas-canonical = { workspace = true }
+voyagent-driver-contracts = { workspace = true }
+voyagent-browser-runner = { workspace = true }
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+]

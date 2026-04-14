@@ -17,10 +17,21 @@ from drivers._contracts.cache import OfferCache
 from drivers._contracts.errors import (
     CapabilityNotSupportedError,
     PermanentError,
+    ValidationFailedError,
 )
 from drivers._contracts.fare_search import FareSearchCriteria
 from drivers._contracts.manifest import CapabilityManifest
-from schemas.canonical import EntityId, Fare, PNR, PNRStatus, Ticket
+from drivers._contracts.passenger_resolver import PassengerResolver
+from schemas.canonical import (
+    EntityId,
+    Fare,
+    Gender,
+    Passenger,
+    Passport,
+    PNR,
+    PNRStatus,
+    Ticket,
+)
 
 from .client import AmadeusClient
 from .config import AmadeusConfig
@@ -63,6 +74,7 @@ class AmadeusDriver:
         client: AmadeusClient | None = None,
         tenant_id: EntityId | None = None,
         offer_cache: OfferCache | None = None,
+        passenger_resolver: PassengerResolver | None = None,
     ) -> None:
         self._config = config
         self._client = client or AmadeusClient(config)
@@ -75,6 +87,12 @@ class AmadeusDriver:
         # constructs a shared cache via :func:`build_offer_cache` and
         # injects it here — tests supply an ``InMemoryOfferCache``.
         self._offer_cache: OfferCache | None = offer_cache
+        # The resolver turns canonical passenger ids into full
+        # :class:`Passenger` + :class:`Passport` records for the Amadeus
+        # traveler block. ``None`` is accepted at construction but will
+        # cause ``create`` to raise — callers must inject a resolver
+        # before they book.
+        self._passenger_resolver: PassengerResolver | None = passenger_resolver
 
     async def aclose(self) -> None:
         """Release the underlying HTTP client."""
@@ -128,11 +146,25 @@ class AmadeusDriver:
         that offer, keyed via :func:`_offer_cache_key`. ``create`` then
         re-reads the offer to build the booking payload.
 
+        Pagination: ``criteria.max_results`` (default 50) is validated
+        to lie in ``[1, 250]`` — 250 is the Amadeus Self-Service hard
+        cap on a single request. Paging beyond 250 requires narrowing
+        the query (date, cabin, airline whitelist) and is tracked as an
+        open gap.
+
         Raises: any of the standard driver errors — see
-        :meth:`FareSearchDriver.search`.
+        :meth:`FareSearchDriver.search`. Invalid ``max_results`` raises
+        :class:`ValidationFailedError`.
         """
+        max_results = getattr(criteria, "max_results", 50)
+        if not (1 <= int(max_results) <= 250):
+            raise ValidationFailedError(
+                DRIVER_NAME,
+                f"max_results must be between 1 and 250 (got {max_results!r}); "
+                "Amadeus Self-Service rejects anything larger.",
+            )
         params = criteria_to_query_params(criteria)
-        params["max"] = "50"  # Amadeus caps at 250; 50 is plenty for v0.
+        params["max"] = str(int(max_results))
         body = await self._client.get_json("/v2/shopping/flight-offers", params=params)
 
         offers = (body or {}).get("data") or []
@@ -189,6 +221,10 @@ class AmadeusDriver:
                 if f.total.currency == criteria.max_price.currency
                 and f.total.amount <= criteria.max_price.amount
             ]
+        # Defensive truncation — Amadeus usually honours ``max`` exactly,
+        # but nothing guarantees the response stays at or below the cap.
+        if len(fares) > int(max_results):
+            fares = fares[: int(max_results)]
         return fares
 
     # ------------------------------------------------------------------ #
@@ -214,14 +250,17 @@ class AmadeusDriver:
              expiry, re-price via ``POST
              /v1/shopping/flight-offers/pricing`` and use the returned
              offer instead.
-          3. Synthesise minimal ``travelers`` blocks (one per
-             ``passenger_id``) — richer passenger detail will be
-             wired when the runtime exposes Passenger lookups.
+          3. Resolve ``passenger_ids`` via the injected
+             :class:`PassengerResolver` and build authoritative Amadeus
+             ``travelers`` blocks from the returned canonical
+             :class:`Passenger` + :class:`Passport` records.
           4. POST ``/v1/booking/flight-orders`` and map the response
              through :func:`amadeus_order_to_pnr`.
 
-        Raises :class:`PermanentError` on cache miss — the caller must
-        re-run ``search`` and try again with fresh fare ids.
+        Raises :class:`PermanentError` on cache miss or when the driver
+        was constructed without a resolver. Raises
+        :class:`ValidationFailedError` when a resolved passenger is
+        missing a field Amadeus treats as mandatory (date_of_birth).
         """
         if self._offer_cache is None:
             raise PermanentError(
@@ -229,10 +268,23 @@ class AmadeusDriver:
                 "AmadeusDriver.create requires an offer cache; none was "
                 "configured on this driver instance.",
             )
+        if self._passenger_resolver is None:
+            raise PermanentError(
+                DRIVER_NAME,
+                "AmadeusDriver.create: driver constructed without "
+                "passenger_resolver — cannot build real traveler blocks. "
+                "Inject one via the constructor (the runtime bundle wires "
+                "an InMemoryPassengerResolver by default).",
+            )
         if not fare_ids:
             raise PermanentError(
                 DRIVER_NAME,
                 "AmadeusDriver.create: fare_ids must not be empty.",
+            )
+        if not passenger_ids:
+            raise PermanentError(
+                DRIVER_NAME,
+                "AmadeusDriver.create: passenger_ids must not be empty.",
             )
 
         # Collect distinct offers — multiple fare_ids from the same
@@ -264,7 +316,14 @@ class AmadeusDriver:
             else:
                 refreshed.append(offer)
 
-        travelers_payload = _synthesize_travelers(passenger_ids)
+        # Resolve canonical passengers and build real traveler blocks.
+        passengers = await self._passenger_resolver.resolve(
+            self._tenant_id, list(passenger_ids)
+        )
+        travelers_payload = [
+            _passenger_to_traveler(idx, pax)
+            for idx, pax in enumerate(passengers, start=1)
+        ]
 
         body = {
             "data": {
@@ -451,42 +510,118 @@ def _needs_reprice(offer: dict[str, Any]) -> bool:
     return remaining < _REPRICE_THRESHOLD_SECONDS
 
 
-def _synthesize_travelers(passenger_ids: list[EntityId]) -> list[dict[str, Any]]:
-    """Build minimal Amadeus ``travelers`` blocks from canonical ids.
+_GENDER_TO_AMADEUS: dict[Gender, str] = {
+    Gender.MALE: "MALE",
+    Gender.FEMALE: "FEMALE",
+    Gender.UNSPECIFIED: "UNSPECIFIED",
+}
 
-    v0 does not round-trip through the canonical ``Passenger`` registry
-    yet — the PNR contract passes ids only. We emit placeholder
-    traveler objects so the booking payload has the required shape; a
-    richer implementation will join to :class:`Passenger` and fill in
-    names, dates of birth, contact info, and documents.
 
-    TODO(voyagent-amadeus): integrate with a PassengerResolver once
-    the runtime exposes one.
+def _split_e164(phone: str) -> tuple[str, str]:
+    """Split an E.164 ``+CCNUMBER`` into ``(countryCallingCode, number)``.
+
+    Amadeus phones are two separate fields; we don't need a library for
+    this — E.164 is ``+`` then country code (1–3 digits) then subscriber
+    number. We take the leading 1–3 digits as the country code, erring
+    on the side of 2 when ambiguous since most of Voyagent's markets
+    (India 91, UAE 971, UK 44, USA 1) are covered by 1–3-digit codes.
     """
-    travelers: list[dict[str, Any]] = []
-    for idx, pid in enumerate(passenger_ids, start=1):
-        travelers.append(
-            {
-                "id": str(idx),
-                "dateOfBirth": "1990-01-01",
-                "name": {"firstName": "PLACEHOLDER", "lastName": "TRAVELER"},
-                "gender": "UNSPECIFIED",
-                "contact": {
-                    "emailAddress": "placeholder@example.com",
-                    "phones": [
-                        {
-                            "deviceType": "MOBILE",
-                            "countryCallingCode": "1",
-                            "number": "5550000000",
-                        }
-                    ],
-                },
-                # Embed the canonical id so the audit trail can join
-                # back even though Amadeus ignores unknown fields.
-                "meta": {"voyagent_passenger_id": str(pid)},
-            }
+    if not phone or not phone.startswith("+"):
+        return ("", phone or "")
+    digits = phone[1:]
+    # Common cases: 1 (US/CA), 7 (RU/KZ). Otherwise use 2 or 3 digits —
+    # 2 digits covers IN (91), UK (44), DE (49), FR (33), etc; 3 digits
+    # covers AE (971), SG (65 is two), PH (63 is two)…for simplicity we
+    # default to 2 digits unless the leading digit is 1 or 7.
+    if digits[:1] in {"1", "7"}:
+        cc, num = digits[:1], digits[1:]
+    elif digits[:3] in {"971", "966", "974", "973", "880", "977"}:
+        cc, num = digits[:3], digits[3:]
+    else:
+        cc, num = digits[:2], digits[2:]
+    return (cc, num)
+
+
+def _passenger_to_traveler(idx: int, passenger: Passenger) -> dict[str, Any]:
+    """Map a canonical :class:`Passenger` to the Amadeus ``travelers[]`` shape.
+
+    Amadeus requires ``id`` (1-indexed), ``dateOfBirth`` (ISO date),
+    ``name.firstName`` / ``name.lastName``, ``gender``, and at least one
+    contact channel. Passport data flows through ``documents[]`` when
+    present.
+
+    Raises :class:`ValidationFailedError` when ``date_of_birth`` is
+    missing — Amadeus rejects the booking otherwise.
+    """
+    if passenger.date_of_birth is None:
+        raise ValidationFailedError(
+            DRIVER_NAME,
+            f"passenger {passenger.id} missing date_of_birth required for booking",
         )
-    return travelers
+
+    passport: Passport | None = passenger.passport
+    # Name: passport MRZ wins when present (matches ticket issuance).
+    if passport is not None:
+        first_name = passport.given_name
+        last_name = passport.family_name
+    else:
+        first_name = passenger.given_name
+        last_name = passenger.family_name
+
+    # Gender: passport > passenger > UNSPECIFIED.
+    if passport is not None:
+        gender_amadeus = _GENDER_TO_AMADEUS[passport.gender]
+    elif passenger.gender is not None:
+        gender_amadeus = _GENDER_TO_AMADEUS[passenger.gender]
+    else:
+        gender_amadeus = "UNSPECIFIED"
+
+    traveler: dict[str, Any] = {
+        "id": str(idx),
+        "dateOfBirth": passenger.date_of_birth.isoformat(),
+        "name": {"firstName": first_name, "lastName": last_name},
+        "gender": gender_amadeus,
+        # Round-trip the canonical id so audit records can join back.
+        "meta": {"voyagent_passenger_id": str(passenger.id)},
+    }
+
+    # Contact block — Amadeus will 400 without at least a phone OR email.
+    contact: dict[str, Any] = {}
+    if passenger.emails:
+        contact["emailAddress"] = passenger.emails[0].address
+    if passenger.phones:
+        phones_out: list[dict[str, Any]] = []
+        for ph in passenger.phones:
+            cc, num = _split_e164(ph.e164)
+            phones_out.append(
+                {
+                    "deviceType": "MOBILE",
+                    "countryCallingCode": cc,
+                    "number": num,
+                }
+            )
+        contact["phones"] = phones_out
+    if contact:
+        traveler["contact"] = contact
+
+    # Documents: Amadeus accepts a PASSPORT document with number, issuing
+    # country, expiry, and nationality.
+    if passport is not None:
+        traveler["documents"] = [
+            {
+                "documentType": "PASSPORT",
+                "number": passport.number.get_secret_value(),
+                "issuanceCountry": passport.issuing_country,
+                "nationality": (
+                    passenger.nationality or passport.issuing_country
+                ),
+                "expiryDate": passport.expiry_date.isoformat(),
+                "holder": True,
+                "birthPlace": passport.place_of_birth,
+            }
+        ]
+
+    return traveler
 
 
 __all__ = ["AmadeusDriver"]

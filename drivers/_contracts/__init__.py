@@ -35,6 +35,7 @@ from .hotel_booking import HotelBookingDriver
 from .hotel_search import HotelOffer, HotelSearchCriteria, HotelSearchDriver
 from .manifest import CapabilityManifest
 from .messaging import MessagingDriver
+from .passenger_resolver import PassengerResolver
 from .payment import PaymentDriver
 from .pnr import PNRDriver
 from .statutory import StatutoryDriver
@@ -56,6 +57,7 @@ __all__ = [
     "MessagingDriver",
     "OfferCache",
     "PNRDriver",
+    "PassengerResolver",
     "PaymentDriver",
     "StatutoryDriver",
     "VisaPortalDriver",

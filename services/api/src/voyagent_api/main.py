@@ -21,7 +21,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from schemas.canonical import Money
 
-from voyagent_api import chat
+from voyagent_api import chat, webhooks
+from voyagent_api.audit import record_auth_failure
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,48 @@ app.add_middleware(
 )
 
 app.include_router(chat.router)
+app.include_router(webhooks.router)
+app.include_router(webhooks.auth_router)
+
+
+# --------------------------------------------------------------------------- #
+# Auth-failure audit middleware                                               #
+# --------------------------------------------------------------------------- #
+#
+# A rejected JWT (401 / 403 from the auth dependency) flies up as a
+# FastAPI HTTPException. Catching it in middleware lets us append an
+# AuditEvent without cluttering every endpoint. Rate-limited inside
+# ``record_auth_failure`` so a broken client can't flood the table.
+
+
+from fastapi import Request, Response
+from starlette.middleware.base import BaseHTTPMiddleware
+
+
+class _AuthFailureAuditMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):  # type: ignore[override]
+        response: Response = await call_next(request)
+        if response.status_code in (401, 403):
+            try:
+                detail = (
+                    response.headers.get("x-voyagent-auth-detail") or ""
+                )
+                await record_auth_failure(
+                    error_code=detail
+                    or ("unauthorized" if response.status_code == 401 else "forbidden"),
+                    method=request.method,
+                    path=request.url.path,
+                    remote_addr=(
+                        request.client.host if request.client else "unknown"
+                    ),
+                )
+            except Exception:  # noqa: BLE001
+                # Never let auditing take down the response.
+                logger.debug("auth-failure audit middleware swallowed error")
+        return response
+
+
+app.add_middleware(_AuthFailureAuditMiddleware)
 
 
 @app.on_event("startup")

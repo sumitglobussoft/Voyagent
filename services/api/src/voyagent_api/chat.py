@@ -260,6 +260,15 @@ async def send_message(
     One ``event: agent_event`` frame per :class:`AgentEvent`; ``event:
     heartbeat`` every 15 s of silence; a synthetic ``error``-kind frame on
     any unexpected exception before the stream closes.
+
+    Each ``agent_event`` carries a monotonically-increasing ``id:``
+    field scoped to the session. On reconnect, clients send the last
+    seen id in the ``Last-Event-ID`` HTTP header; the endpoint replays
+    any buffered events with a higher id without re-running the
+    orchestrator. Heartbeats carry no ``id:``.
+
+    The replay buffer is in-memory per session and capped at
+    ``SSE_REPLAY_BUFFER_CAP`` (200 by default).
     """
     runtime = _runtime_or_503()
     bundle = await _get_bundle()
@@ -270,23 +279,117 @@ async def send_message(
 
     AgentEventCls = runtime.AgentEvent
     AgentEventKind = runtime.AgentEventKind
+    buffer_cap: int = getattr(runtime, "SSE_REPLAY_BUFFER_CAP", 200)
+
+    # Parse Last-Event-ID. Per the SSE spec, browsers auto-send it when
+    # the EventSource reconnects; our SDK forwards an explicit header on
+    # its own retry path.
+    raw_last_id = request.headers.get("last-event-id")
+    last_event_id: int | None = None
+    if raw_last_id is not None and raw_last_id != "":
+        try:
+            last_event_id = int(raw_last_id)
+        except ValueError:
+            last_event_id = None  # treated as mismatch below.
+
+    # Defensive: older Session instances (pre-reconnect work) may lack
+    # the buffer + counter attributes. Synthesize defaults rather than
+    # crashing on an in-flight rollout.
+    if getattr(session, "sse_event_buffer", None) is None:
+        try:
+            session.sse_event_buffer = []  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001
+            pass
+    if getattr(session, "sse_last_event_id", None) is None:
+        try:
+            session.sse_last_event_id = 0  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _append_to_buffer(eid: int, data_json: str) -> None:
+        buf = session.sse_event_buffer
+        buf.append((eid, data_json))
+        overflow = len(buf) - buffer_cap
+        if overflow > 0:
+            del buf[:overflow]
+
+    def _next_event_id() -> int:
+        session.sse_last_event_id = int(session.sse_last_event_id) + 1
+        return session.sse_last_event_id
+
+    replay_requested = raw_last_id is not None and raw_last_id != ""
+    replay_valid = (
+        last_event_id is not None
+        and last_event_id <= int(session.sse_last_event_id)
+    )
 
     async def event_source() -> AsyncIterator[dict[str, str]]:
         final_kind = AgentEventKind.FINAL.value
+
+        # --- Replay path -------------------------------------------- #
+        if replay_requested:
+            if replay_valid:
+                replayed = [
+                    (eid, data)
+                    for eid, data in list(session.sse_event_buffer)
+                    if last_event_id is not None and eid > last_event_id
+                ]
+                for eid, data in replayed:
+                    yield {
+                        "id": str(eid),
+                        "event": "agent_event",
+                        "data": data,
+                    }
+                # If the last replayed frame was the terminal ``final``,
+                # close without re-running the turn.
+                if replayed:
+                    try:
+                        tail_payload = json.loads(replayed[-1][1])
+                        if (
+                            isinstance(tail_payload, dict)
+                            and tail_payload.get("kind") == final_kind
+                        ):
+                            return
+                    except Exception:  # noqa: BLE001
+                        pass
+                # No tail terminator replayed and no new work intended:
+                # return a clean empty stream.
+                if not body.message and not body.approvals:
+                    return
+            else:
+                # Mismatched Last-Event-ID: we can't prove what the
+                # client has. Emit a single error frame with a
+                # ``replay_failed`` code and keep going live.
+                err = AgentEventCls(
+                    kind=AgentEventKind.ERROR,
+                    session_id=session_id,
+                    turn_id="replay",
+                    timestamp=datetime.now(timezone.utc),
+                    error_message="replay_failed: Last-Event-ID outside server buffer",
+                )
+                err_json = json.dumps(
+                    err.model_dump(mode="json"), separators=(",", ":")
+                )
+                eid = _next_event_id()
+                _append_to_buffer(eid, err_json)
+                yield {"id": str(eid), "event": "agent_event", "data": err_json}
+
+        # --- Live path ---------------------------------------------- #
         try:
             async for event in bundle.orchestrator.run_turn(
                 session,
                 body.message,
                 approvals=body.approvals,
+                actor_role=tenant_ctx.role,
             ):
                 if await request.is_disconnected():
                     logger.info("chat.sse.client_disconnect session_id=%s", session_id)
                     break
                 payload = event.model_dump(mode="json")
-                yield {
-                    "event": "agent_event",
-                    "data": json.dumps(payload, separators=(",", ":")),
-                }
+                data = json.dumps(payload, separators=(",", ":"))
+                eid = _next_event_id()
+                _append_to_buffer(eid, data)
+                yield {"id": str(eid), "event": "agent_event", "data": data}
                 if payload.get("kind") == final_kind:
                     break
         except Exception as exc:  # noqa: BLE001
@@ -298,12 +401,12 @@ async def send_message(
                 timestamp=datetime.now(timezone.utc),
                 error_message=str(exc),
             )
-            yield {
-                "event": "agent_event",
-                "data": json.dumps(
-                    error_event.model_dump(mode="json"), separators=(",", ":")
-                ),
-            }
+            data = json.dumps(
+                error_event.model_dump(mode="json"), separators=(",", ":")
+            )
+            eid = _next_event_id()
+            _append_to_buffer(eid, data)
+            yield {"id": str(eid), "event": "agent_event", "data": data}
 
     async def with_heartbeats() -> AsyncIterator[dict[str, str]]:
         """Interleave ``event: heartbeat`` frames during silence > 15 s."""

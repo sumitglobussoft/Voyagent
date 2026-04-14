@@ -84,6 +84,12 @@ export class VoyagentClient {
    * The returned iterable completes when the server closes the stream (after
    * a `final`-kind event, or a runtime error, or the client aborting via
    * `input.signal`). `heartbeat` SSE frames are silently dropped.
+   *
+   * Reconnection: the underlying SSE helper retries once the server
+   * closes mid-turn, forwarding the last seen `id:` as a
+   * `Last-Event-ID` header so the API can resume from its replay
+   * buffer. Retries stop once a `final`-kind event is observed or
+   * {@link SendMessageInput.signal} is aborted.
    */
   async *sendMessage(
     sessionId: string,
@@ -100,12 +106,24 @@ export class VoyagentClient {
       approvals: input.approvals ?? null,
     });
 
-    const iter = streamSSE<AgentEvent>(url, {
-      method: "POST",
-      headers,
-      body,
-      signal: input.signal,
-    });
+    const iter = streamSSE<AgentEvent>(
+      url,
+      {
+        method: "POST",
+        headers,
+        body,
+        signal: input.signal,
+      },
+      {
+        onLastEventId: input.onLastEventId,
+        reconnect: {
+          isTerminalEvent: (ev) =>
+            ev.event === "agent_event" &&
+            !!ev.data &&
+            (ev.data as AgentEvent).kind === "final",
+        },
+      },
+    );
 
     for await (const ev of iter) {
       if (ev.event === "heartbeat") continue;

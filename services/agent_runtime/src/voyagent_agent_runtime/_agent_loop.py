@@ -223,7 +223,32 @@ async def run_agent_turn(
                 )
                 continue
 
-            payload: dict[str, Any] = outcome.output or {
+            if outcome.kind == "permission_denied":
+                payload: dict[str, Any] = {
+                    "error": "permission_denied",
+                    "detail": outcome.message
+                    or outcome.error_message
+                    or "role not permitted",
+                }
+                yield AgentEvent(
+                    kind=AgentEventKind.TOOL_RESULT,
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    tool_name=tool_name,
+                    tool_output=payload,
+                    tool_call_id=tool_call_id,
+                )
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_call_id,
+                        "content": _compact_json(payload),
+                        "is_error": True,
+                    }
+                )
+                continue
+
+            payload = outcome.output or {
                 "error": outcome.error_message or "unknown tool error"
             }
             yield AgentEvent(

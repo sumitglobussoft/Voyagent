@@ -5,10 +5,12 @@ Anything that couldn't be mapped (missing required field, unparseable date,
 shape drift) raises :class:`ValidationFailedError` with ``driver="amadeus"``.
 
 All monetary values are parsed through ``Decimal(str(...))`` so we never
-round-trip through float. All datetimes are forced to timezone-aware UTC;
-Amadeus returns local-to-origin times without an offset, which we currently
-pin to UTC with a TODO for proper timezone resolution (see module docstring
-of :mod:`drivers.amadeus`).
+round-trip through float. All datetimes are forced to timezone-aware UTC.
+Amadeus returns local-to-origin times without an offset; segment mapping
+resolves the airport IANA zone via :func:`schemas.canonical.apply_airport_timezone`.
+If an airport is absent from the curated registry, the mapper logs a
+WARNING (with ``tz_resolved=False``) and falls back to pinning the value
+to UTC — a single unknown airport must not fail a whole offer.
 """
 
 from __future__ import annotations
@@ -35,6 +37,8 @@ from schemas.canonical import (
     SegmentStatus,
     TaxLine,
     TaxRegime,
+    apply_airport_timezone,
+    resolve_airport_tz,
 )
 
 logger = logging.getLogger(__name__)
@@ -116,17 +120,16 @@ def _parse_decimal(value: Any, ctx: str) -> Decimal:
 
 
 def _parse_datetime(value: Any, ctx: str) -> datetime:
-    """Parse Amadeus ISO8601 strings.
+    """Parse Amadeus ISO8601 strings for non-airport-scoped fields.
 
-    Amadeus returns local-to-origin times without a timezone offset
-    (e.g. ``2024-08-12T14:30:00``). Canonical FlightSegment requires
-    timezone-aware UTC — we attach UTC here as a v0 compromise. A real
-    production driver must resolve the airport timezone and convert.
+    Used for offer-level datetimes that are already UTC-ish (e.g.
+    ``lastTicketingDateTime``, ``ticketingAgreement.dateTime``). For
+    flight-segment ``departure.at`` / ``arrival.at``, use
+    :func:`_parse_airport_datetime` — those fields are local wall time
+    at the airport and need zone resolution.
 
-    TODO(voyagent-amadeus): airport-timezone resolution. Either call
-    the ``/v1/reference-data/locations/airports`` endpoint and cache, or
-    push timezone awareness to the agent layer that owns a richer
-    airport registry.
+    When the Amadeus value carries no offset, we attach UTC as a safe
+    compromise consistent with this function's non-airport scope.
     """
     if not isinstance(value, str):
         raise ValidationFailedError(
@@ -145,6 +148,54 @@ def _parse_datetime(value: Any, ctx: str) -> datetime:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
+
+
+def _parse_airport_datetime(value: Any, iata: str, ctx: str) -> datetime:
+    """Parse an Amadeus segment datetime and convert to UTC via the airport zone.
+
+    Amadeus returns segment ``departure.at`` / ``arrival.at`` as a naive
+    ISO-8601 string expressed in local wall time at the airport (e.g.
+    ``2026-05-10T14:30:00`` at ``BOM`` means 14:30 IST). We resolve the
+    airport's IANA zone via :func:`resolve_airport_tz`, reinterpret the
+    naive datetime as wall time in that zone, and convert to UTC.
+
+    Fallback: when the airport is unknown to the curated registry we log
+    a WARNING breadcrumb (``tz_resolved=False``) and attach UTC directly
+    — losing accuracy but not the offer. Callers that want stricter
+    behaviour can enforce it at a layer above.
+
+    If the value is already tz-aware (rare, but Amadeus Enterprise
+    sometimes includes an offset), we honour that offset and convert to
+    UTC without consulting the airport registry.
+    """
+    if not isinstance(value, str):
+        raise ValidationFailedError(
+            DRIVER_NAME,
+            f"Amadeus {ctx}: datetime must be a string, got {type(value).__name__}.",
+        )
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValidationFailedError(
+            DRIVER_NAME,
+            f"Amadeus {ctx}: cannot parse datetime {value!r}.",
+        ) from exc
+
+    # Already tz-aware — trust the offset and convert.
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc)
+
+    zone = resolve_airport_tz(iata)
+    if zone is None:
+        logger.warning(
+            "amadeus.mapping: no timezone for airport %r; pinning %s to UTC "
+            "(tz_resolved=False ctx=%s).",
+            iata,
+            value,
+            ctx,
+        )
+        return dt.replace(tzinfo=timezone.utc)
+    return apply_airport_timezone(iata, dt)
 
 
 def _iata(value: Any, ctx: str) -> IATACode:
@@ -169,6 +220,13 @@ def amadeus_segment_to_flight_segment(seg: dict[str, Any], tenant_id: EntityId) 
     so this function does not know the cabin without extra context. Callers
     that know the cabin should overwrite the field; otherwise this default
     uses ECONOMY and records the Amadeus RBD in ``booking_class`` when set.
+
+    Timezone handling: ``departure.at`` and ``arrival.at`` are Amadeus
+    local-time strings pinned to the airport. This function resolves
+    each airport's IANA zone through the curated registry in
+    :mod:`schemas.canonical.airports` and converts to UTC. Unknown
+    airports fall back to UTC pinning with a WARNING log (``tz_resolved=False``);
+    a single airport gap does not abort the whole offer.
     """
     try:
         departure = _require(seg, "departure", "segment")
@@ -184,15 +242,32 @@ def amadeus_segment_to_flight_segment(seg: dict[str, Any], tenant_id: EntityId) 
     aircraft_raw = seg.get("aircraft") or {}
     aircraft = aircraft_raw.get("code") if isinstance(aircraft_raw, dict) else None
 
+    origin_code = _iata(
+        _require(departure, "iataCode", "segment.departure"),
+        "segment.departure.iataCode",
+    )
+    destination_code = _iata(
+        _require(arrival, "iataCode", "segment.arrival"),
+        "segment.arrival.iataCode",
+    )
+
     return FlightSegment(
         id=_new_entity_id(),
         marketing_carrier=marketing,
         operating_carrier=_iata(operating, "segment.operating") if operating else None,
         flight_number=number,
-        origin=_iata(_require(departure, "iataCode", "segment.departure"), "segment.departure.iataCode"),
-        destination=_iata(_require(arrival, "iataCode", "segment.arrival"), "segment.arrival.iataCode"),
-        departure_at=_parse_datetime(_require(departure, "at", "segment.departure"), "segment.departure.at"),
-        arrival_at=_parse_datetime(_require(arrival, "at", "segment.arrival"), "segment.arrival.at"),
+        origin=origin_code,
+        destination=destination_code,
+        departure_at=_parse_airport_datetime(
+            _require(departure, "at", "segment.departure"),
+            origin_code,
+            "segment.departure.at",
+        ),
+        arrival_at=_parse_airport_datetime(
+            _require(arrival, "at", "segment.arrival"),
+            destination_code,
+            "segment.arrival.at",
+        ),
         cabin=CabinClass.ECONOMY,
         aircraft=str(aircraft) if aircraft else None,
         status=SegmentStatus.PLANNED,

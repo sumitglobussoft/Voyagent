@@ -42,6 +42,8 @@ from jwt import PyJWKClient
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .revocation import build_revocation_list
+
 logger = logging.getLogger(__name__)
 
 
@@ -227,6 +229,29 @@ async def verify_token(token: str) -> AuthenticatedPrincipal:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="token_invalid",
         ) from exc
+
+    # Revocation check runs AFTER signature/claims verification so we
+    # don't query Redis for garbage tokens. The ``jti`` claim is the
+    # denylist key; Clerk includes one by default. A missing jti means
+    # we cannot revoke this specific token — log once and let the
+    # request through rather than denying all traffic from an IDP that
+    # declines to mint jti.
+    jti = str(claims.get("jti") or "").strip()
+    if jti:
+        try:
+            rev_list = build_revocation_list()
+            if await rev_list.is_revoked(jti):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="token_revoked",
+                )
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            # Fail-open — a revocation-list outage must not 401 everyone.
+            logger.warning("revocation check failed (fail-open): %s", exc)
+    else:
+        logger.debug("jwt has no jti claim — revocation check skipped")
 
     return _principal_from_claims(claims)
 

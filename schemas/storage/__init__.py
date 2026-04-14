@@ -14,6 +14,21 @@ from __future__ import annotations
 
 from .audit import AuditEventRow, AuditStatusEnum
 from .base import Base, Timestamps, UUIDType, tenant_id_fk, uuid7, uuid_pk
+from .credentials import (
+    CredentialPayload,
+    TenantCredentialRepository,
+    resolve_tenant_credentials,
+    set_repository_for_test,
+)
+from .crypto import (
+    CredentialDecryptionError,
+    FernetEnvKMS,
+    KMSConfigurationError,
+    KMSProvider,
+    NullKMS,
+    SecurityError,
+    build_kms_provider,
+)
 from .session import (
     ACTOR_KIND_SATYPE,
     ActorKindEnum,
@@ -30,15 +45,26 @@ __all__ = [
     "AuditEventRow",
     "AuditStatusEnum",
     "Base",
+    "CredentialDecryptionError",
+    "CredentialPayload",
+    "FernetEnvKMS",
+    "KMSConfigurationError",
+    "KMSProvider",
     "MessageRow",
+    "NullKMS",
     "PendingApprovalRow",
+    "SecurityError",
     "SessionRow",
     "Tenant",
     "TenantCredential",
+    "TenantCredentialRepository",
     "Timestamps",
     "UUIDType",
     "User",
     "UserRole",
+    "build_kms_provider",
+    "resolve_tenant_credentials",
+    "set_repository_for_test",
     "tenant_id_fk",
     "uuid7",
     "uuid_pk",

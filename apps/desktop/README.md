@@ -84,20 +84,80 @@ runtime. Keep this boundary clean — do not import Tauri APIs from inside
 
 ## Auth
 
-Not wired yet. A concurrent agent is landing Clerk integration for the
-web app first; the desktop shell will follow with `@clerk/clerk-react`
-plus a Tauri deep-link handler for the OAuth redirect. Until then the
-shell boots with a dev tenant and actor from the environment (see
-`src/sdk.ts`).
+Clerk is wired via `@clerk/clerk-js` + a Tauri deep link.
+
+- `src/auth/ClerkClient.ts` — the JS SDK wrapper; drives sign-in via
+  `@tauri-apps/plugin-shell.open` on a Clerk-hosted URL.
+- `src/auth/DeepLinkHandler.tsx` — listens for `voyagent://auth/callback`
+  and forwards the captured session to `ClerkClient.applySession`.
+- `src/auth/tokenStore.ts` — typed wrapper over the Rust-side
+  `auth_store_token` / `auth_load_token` / `auth_clear_token` commands,
+  which persist the session JWT under the app's local data directory
+  (permissions tightened to 0600 on POSIX).
+- `src/auth/AuthProvider.tsx` — React context; rehydrates the stored
+  token on mount and exposes `getToken`, `signIn`, `signOut`.
+
+On first launch `<SignInScreen>` renders until the user completes the
+hosted flow; `src/sdk.ts` builds the `VoyagentClient` with an
+`authToken` getter that pulls a fresh JWT via `clerk.session.getToken()`
+on every API call.
+
+Environment — copy `.env.example` to `.env` and set
+`VITE_CLERK_PUBLISHABLE_KEY`. Register `voyagent://auth/callback` as an
+allowed redirect URL in the Clerk dashboard for the desktop instance.
+
+## Production build
+
+### Icons
+
+The bundler reads `bundle.icon` in `tauri.conf.json`. Generate the full
+set from a 1024×1024 master PNG:
+
+```bash
+pnpm tauri icon path/to/voyagent-1024.png
+```
+
+See `src-tauri/icons/README.md` for the expected filenames.
+
+### Code signing
+
+macOS and Windows signing are stubbed in `tauri.conf.json` under
+`bundle.macOS` / `bundle.windows`. Populate them in CI — do NOT commit
+signing certificates. The expected env vars consumed by `tauri build`
+are:
+
+- `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_ID`,
+  `APPLE_PASSWORD`, `APPLE_TEAM_ID` — macOS signing + notarisation.
+- `WINDOWS_CERTIFICATE` (base64 PFX), `WINDOWS_CERTIFICATE_PASSWORD` —
+  Windows Authenticode.
+
+### Auto-updater
+
+`tauri-plugin-updater` is registered in `src-tauri/src/main.rs`; the
+TS surface is `src/Updater.tsx`, which calls the `check_for_updates`
+command on mount (throttled once per 24 h). Before shipping:
+
+1. Generate a signing key pair:
+   ```bash
+   pnpm tauri signer generate -w ~/.tauri/voyagent-updater.key
+   ```
+2. Paste the public key into `plugins.updater.pubkey` in
+   `tauri.conf.json`.
+3. Expose the private key to CI as `TAURI_SIGNING_PRIVATE_KEY` +
+   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+4. Host a `latest.json` manifest at the configured endpoint; the
+   build step emits `*.sig` files CI concatenates into the manifest.
 
 ## Known limitations
 
-- No auto-update (Tauri updater plugin not configured).
-- No code signing — release bundles will trigger OS Gatekeeper /
-  SmartScreen warnings.
+- Clerk refresh-token rotation on desktop relies on the Clerk JS SDK's
+  built-in session refresh; no independent refresh-token store.
+- No biometric unlock gate before reading the stored session token.
 - No Tally or GDS driver yet; `local_driver_invoke` is a stub.
-- Icon bundle (`src-tauri/icons/`) not generated — `tauri build` will
-  complain until you run `pnpm tauri icon <path-to-png>`.
+- Icon bundle (`src-tauri/icons/`) placeholder — run
+  `pnpm tauri icon <path-to-png>` once brand art lands.
+- Code-signing certificates must be provisioned out of band.
+- Updater manifest endpoint + signer key pair are human-owned steps.
 
 ## Scripts
 

@@ -67,6 +67,10 @@ class _StubSession(BaseModel):
     actor_id: str
     message_history: list[dict[str, Any]] = []
     pending_approvals: dict[str, _StubPendingApproval] = {}
+    # Fields added for the SSE reconnect/replay work. Mirror the real
+    # ``voyagent_agent_runtime.Session`` contract.
+    sse_last_event_id: int = 0
+    sse_event_buffer: list[tuple[int, str]] = []
 
 
 class _StubStore:
@@ -81,12 +85,17 @@ class _StubStore:
 
 
 class _StubOrchestrator:
+    def __init__(self) -> None:
+        self.run_count = 0
+
     async def run_turn(
         self,
         session: _StubSession,
         user_message: str,
         approvals: dict[str, bool] | None = None,
+        actor_role: str | None = None,
     ) -> AsyncIterator[_StubAgentEvent]:
+        self.run_count += 1
         now = datetime.now(timezone.utc)
         yield _StubAgentEvent(
             kind=_StubKind.TEXT_DELTA,
@@ -129,6 +138,7 @@ def _install_stub_runtime() -> None:
     mod.build_default_runtime = _StubBundle  # type: ignore[attr-defined]
     mod.new_session_id = _new_session_id  # type: ignore[attr-defined]
     mod.coerce_entity_id = _coerce_entity_id  # type: ignore[attr-defined]
+    mod.SSE_REPLAY_BUFFER_CAP = 200  # type: ignore[attr-defined]
     sys.modules["voyagent_agent_runtime"] = mod
 
 
@@ -231,6 +241,88 @@ def test_missing_auth_returns_401() -> None:
     client = TestClient(app)
     r = client.post("/chat/sessions", json={})
     assert r.status_code == 401
+
+
+def test_sse_replay_from_last_event_id() -> None:
+    """After a turn completes, re-requesting with ``Last-Event-ID`` replays
+    buffered events without re-running the orchestrator."""
+    client = TestClient(app)
+
+    r = client.post("/chat/sessions", json={}, headers=_DEV_HEADERS)
+    assert r.status_code == 201
+    session_id = r.json()["session_id"]
+
+    # First turn — drain to completion.
+    with client.stream(
+        "POST",
+        f"/chat/sessions/{session_id}/messages",
+        json={"message": "hi", "approvals": None},
+        headers=_DEV_HEADERS,
+    ) as resp:
+        assert resp.status_code == 200
+        first_events = _parse_sse_stream(resp.iter_text())
+
+    agent_events = [e for e in first_events if e["event"] == "agent_event"]
+    assert len(agent_events) == 2
+
+    # The API assigns 1-indexed, monotonic event ids. After two events
+    # we expect "1" and "2" to be the emitted ids.
+    # (The parser in this module doesn't preserve ids on its output —
+    # we verify replay by counting events instead, and by confirming the
+    # stub's ``run_count`` doesn't increment.)
+    orchestrator = chat_module._bundle.orchestrator
+    runs_after_first = orchestrator.run_count
+
+    # Re-connect with Last-Event-ID = 1. We expect only the second event
+    # (id=2) replayed, orchestrator NOT re-invoked.
+    replay_headers = {**_DEV_HEADERS, "Last-Event-ID": "1"}
+    with client.stream(
+        "POST",
+        f"/chat/sessions/{session_id}/messages",
+        json={"message": "", "approvals": None},
+        headers=replay_headers,
+    ) as resp:
+        assert resp.status_code == 200
+        second_events = _parse_sse_stream(resp.iter_text())
+
+    replayed = [e for e in second_events if e["event"] == "agent_event"]
+    assert len(replayed) == 1
+    assert replayed[0]["data"]["kind"] == "final"
+    assert orchestrator.run_count == runs_after_first, (
+        "orchestrator must not re-run on pure-replay reconnect"
+    )
+
+
+def test_sse_replay_mismatched_last_event_id_emits_replay_failed() -> None:
+    """An unknown ``Last-Event-ID`` (past the server's counter) returns a
+    single ``replay_failed`` frame, then continues live."""
+    client = TestClient(app)
+
+    r = client.post("/chat/sessions", json={}, headers=_DEV_HEADERS)
+    assert r.status_code == 201
+    session_id = r.json()["session_id"]
+
+    # Session has never emitted anything. Ask for replay from id=99.
+    replay_headers = {**_DEV_HEADERS, "Last-Event-ID": "99"}
+    with client.stream(
+        "POST",
+        f"/chat/sessions/{session_id}/messages",
+        json={"message": "hi", "approvals": None},
+        headers=replay_headers,
+    ) as resp:
+        assert resp.status_code == 200
+        events = _parse_sse_stream(resp.iter_text())
+
+    kinds = [
+        e["data"]["kind"]
+        for e in events
+        if e["event"] == "agent_event"
+    ]
+    # First frame is the replay_failed error, followed by the live turn's
+    # text_delta + final events.
+    assert kinds[0] == "error"
+    assert "text_delta" in kinds
+    assert "final" in kinds
 
 
 def test_runtime_unavailable_returns_503() -> None:

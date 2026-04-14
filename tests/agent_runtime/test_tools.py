@@ -19,6 +19,11 @@ from voyagent_agent_runtime.tools import (
 )
 
 
+# A local helper so RBAC tests can mint contexts with varying actor_role.
+def _with_role(ctx: ToolContext, role: str) -> ToolContext:
+    return ctx.model_copy(update={"actor_role": role})
+
+
 # ------------------------------------------------------------------ #
 # Registry isolation                                                 #
 # ------------------------------------------------------------------ #
@@ -164,3 +169,90 @@ def test_get_tool_roundtrip() -> None:
     t = get_tool("search_flights")
     assert t.spec.domain == "ticketing_visa"
     assert t.spec.side_effect is False
+
+
+# ------------------------------------------------------------------ #
+# RBAC                                                               #
+# ------------------------------------------------------------------ #
+
+
+def _register_role_test_tools() -> None:
+    """Register RBAC-scoped fixtures exactly once across the suite."""
+
+    async def _noop(tool_input: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
+        return {"ok": True}
+
+    schema = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": False,
+    }
+
+    if "_test_rbac_scoped" not in {t.spec.name for t in list_tools()}:
+        register_tool(
+            ToolSpec(
+                name="_test_rbac_scoped",
+                description="Approval-required tool limited to accountants.",
+                input_schema=schema,
+                side_effect=True,
+                reversible=True,
+                approval_required=True,
+                approval_roles=["accountant"],
+                domain="cross_cutting",
+            ),
+            _noop,
+        )
+    if "_test_rbac_any_role" not in {t.spec.name for t in list_tools()}:
+        register_tool(
+            ToolSpec(
+                name="_test_rbac_any_role",
+                description="Approval-required tool with empty approval_roles.",
+                input_schema=schema,
+                side_effect=True,
+                reversible=True,
+                approval_required=True,
+                approval_roles=[],
+                domain="cross_cutting",
+            ),
+            _noop,
+        )
+
+
+async def test_rbac_denies_when_role_missing(tool_context: ToolContext) -> None:
+    _register_role_test_tools()
+    sink = InMemoryAuditSink()
+    ctx = _with_role(tool_context, "agent")
+    outcome = await invoke_tool("_test_rbac_scoped", {}, ctx, audit_sink=sink)
+    assert outcome.kind == "permission_denied"
+    assert outcome.message and "not in" in outcome.message
+    # A REJECTED audit row is written; no STARTED/SUCCEEDED pair.
+    assert [ev.status for ev in sink.events] == [AuditStatus.REJECTED]
+
+
+async def test_rbac_allows_when_role_matches(tool_context: ToolContext) -> None:
+    _register_role_test_tools()
+    sink = InMemoryAuditSink()
+    ctx = _with_role(tool_context, "accountant")
+    # First call asks for approval; second call with approval executes.
+    first = await invoke_tool("_test_rbac_scoped", {}, ctx, audit_sink=sink)
+    assert first.kind == "approval_needed"
+    ctx.approvals = {first.approval_id: True}
+    second = await invoke_tool("_test_rbac_scoped", {}, ctx, audit_sink=sink)
+    assert second.kind == "success"
+    assert sink.events[-1].status == AuditStatus.SUCCEEDED
+
+
+async def test_rbac_empty_roles_means_any_authenticated_role(
+    tool_context: ToolContext,
+) -> None:
+    _register_role_test_tools()
+    sink = InMemoryAuditSink()
+    ctx = _with_role(tool_context, "agent")
+    # Empty approval_roles → RBAC short-circuit does not fire; falls
+    # through to the normal approval gate.
+    first = await invoke_tool("_test_rbac_any_role", {}, ctx, audit_sink=sink)
+    assert first.kind == "approval_needed"
+    ctx.approvals = {first.approval_id: True}
+    second = await invoke_tool("_test_rbac_any_role", {}, ctx, audit_sink=sink)
+    assert second.kind == "success"

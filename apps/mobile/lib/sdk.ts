@@ -1,3 +1,6 @@
+import { useMemo } from "react";
+
+import { useAuth } from "@clerk/clerk-expo";
 import { VoyagentClient } from "@voyagent/sdk";
 
 /**
@@ -18,9 +21,35 @@ export const tenantId = env("EXPO_PUBLIC_VOYAGENT_TENANT_ID", "dev-tenant");
 export const actorId = env("EXPO_PUBLIC_VOYAGENT_ACTOR_ID", "dev-user");
 
 /**
- * Mobile-side Voyagent client. Uses React Native's global `fetch`. Auth
- * will be wired in later (Clerk Expo module) — the `authToken` option on
- * `VoyagentClient` accepts an async getter for that.
+ * Mobile-side Voyagent client. Uses React Native's global `fetch`. The
+ * client is wired to Clerk — every outgoing request asks `useAuth().getToken()`
+ * for a fresh session JWT (Clerk refreshes internally).
+ *
+ * Must be called inside a component that sits under `<ClerkProvider>`.
+ */
+export function useVoyagentClient(): VoyagentClient {
+  const { getToken } = useAuth();
+  return useMemo(
+    () =>
+      new VoyagentClient({
+        baseUrl: apiUrl,
+        authToken: async (): Promise<string> => {
+          const token = await getToken();
+          if (!token) {
+            throw new Error(
+              "Voyagent mobile: no Clerk session token available — user is signed out.",
+            );
+          }
+          return token;
+        },
+      }),
+    [getToken],
+  );
+}
+
+/**
+ * Auth-less client — used only for the pre-auth smoke check. Prefer
+ * `useVoyagentClient` for any surface that talks to protected endpoints.
  */
 export function makeVoyagentClient(): VoyagentClient {
   return new VoyagentClient({ baseUrl: apiUrl });

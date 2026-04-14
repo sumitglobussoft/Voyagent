@@ -1,11 +1,20 @@
 [project]
 name = "voyagent-browser-runner"
-version = "0.0.0"
-description = "Voyagent Playwright worker service for browser-automation drivers (skeleton)."
+version = "0.1.0"
+description = "Voyagent Playwright worker service for browser-automation drivers (VFS, BLS, airline extranets)."
 requires-python = ">=3.12"
 dependencies = [
+    "playwright>=1.48",
+    "redis[hiredis]>=5.0",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.4",
+    "aioboto3>=13.0",
     "voyagent-schemas-canonical",
+    "voyagent-driver-contracts",
 ]
+
+[project.scripts]
+voyagent-browser-runner = "voyagent_browser_runner.cli:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -16,3 +25,11 @@ packages = ["src/voyagent_browser_runner"]
 
 [tool.uv.sources]
 voyagent-schemas-canonical = { workspace = true }
+voyagent-driver-contracts = { workspace = true }
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-playwright>=0.5",
+]

@@ -173,6 +173,88 @@ async def test_lru_evicts_least_recently_used(
 
 
 @pytest.mark.asyncio
+async def test_storage_credential_resolver_roundtrip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Seed a TenantCredential row via the repository and verify the
+    runtime-side :class:`StorageCredentialResolver` returns the
+    decrypted fields."""
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlalchemy.pool import StaticPool
+
+    import schemas.storage as storage
+    from schemas.storage import Base
+    from schemas.storage.credentials import (
+        CredentialPayload,
+        TenantCredentialRepository,
+        set_repository_for_test,
+    )
+    from schemas.storage.crypto import FernetEnvKMS
+
+    from voyagent_agent_runtime.tenant_registry import StorageCredentialResolver
+
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        future=True,
+        poolclass=StaticPool,
+        connect_args={"check_same_thread": False},
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    # Seed the tenant FK row.
+    from schemas.storage import Tenant
+
+    tenant_uuid = uuid.UUID("01900000-0000-7000-8000-000000000123")
+    async with engine.begin() as conn:
+        await conn.run_sync(
+            lambda sync_conn: sync_conn.execute(
+                Tenant.__table__.insert().values(
+                    id=str(tenant_uuid),
+                    display_name="Acme",
+                    default_currency="USD",
+                    is_active=True,
+                )
+            )
+        )
+
+    kms = FernetEnvKMS(FernetEnvKMS.generate_key())
+    repo = TenantCredentialRepository(engine, kms)
+    set_repository_for_test(repo)
+    try:
+        await repo.put(
+            tenant_uuid,
+            "amadeus",
+            CredentialPayload(
+                provider="amadeus",
+                fields={
+                    "client_id": "cid-roundtrip",
+                    "client_secret": "sec-roundtrip",
+                },
+                meta={"api_base": "https://test.api.amadeus.com"},
+            ),
+        )
+
+        # Confirm the hook exists and the resolver goes through it.
+        assert hasattr(storage, "resolve_tenant_credentials")
+
+        resolver = StorageCredentialResolver()
+        creds = await resolver(str(tenant_uuid), "amadeus")
+        assert creds is not None
+        assert creds["client_id"] == "cid-roundtrip"
+        assert creds["client_secret"] == "sec-roundtrip"
+        assert creds["api_base"] == "https://test.api.amadeus.com"
+
+        # Repository.get round-trips with AAD verification.
+        fetched = await repo.get(tenant_uuid, "amadeus")
+        assert fetched is not None
+        assert fetched.fields["client_id"] == "cid-roundtrip"
+    finally:
+        set_repository_for_test(None)
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_env_credential_resolver_returns_env_values() -> None:
     env = {
         "VOYAGENT_AMADEUS_CLIENT_ID": "cid-env",

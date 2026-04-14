@@ -1,27 +1,29 @@
 /**
- * @voyagent/chat — React chat UI for the Voyagent agent runtime.
+ * @voyagent/chat — web entry.
  *
- * Exports the top-level `<ChatWindow>` plus the primitives it's composed of
- * (`MessageList`, `ComposerBar`, `ToolCallCard`, `ApprovalPrompt`) and the
- * `useAgentStream` hook for consumers who want to build their own layout.
+ * This file builds to `dist/index.js` and is picked by the `default`
+ * condition in `package.json#exports`. The React Native entry
+ * (`dist/index.native.js`) is built from `index.native.ts` and is picked
+ * by Metro via the `react-native` condition.
  *
- * Components are client-only — they use hooks and talk to the SDK over
- * fetch + SSE. All files are annotated with `"use client"`.
+ * Hooks (`useAgentStream`) and types are platform-agnostic — both entries
+ * re-export them from the same source file. Components diverge into
+ * `*.web.tsx` and `*.native.tsx` variants.
  */
-export { ChatWindow } from "./ChatWindow.js";
-export type { ChatWindowProps } from "./ChatWindow.js";
+export { ChatWindow } from "./ChatWindow.web.js";
+export type { ChatWindowProps } from "./ChatWindow.web.js";
 
-export { MessageList } from "./MessageList.js";
-export type { MessageListProps } from "./MessageList.js";
+export { MessageList } from "./MessageList.web.js";
+export type { MessageListProps } from "./MessageList.web.js";
 
-export { ComposerBar } from "./ComposerBar.js";
-export type { ComposerBarProps } from "./ComposerBar.js";
+export { ComposerBar } from "./ComposerBar.web.js";
+export type { ComposerBarProps } from "./ComposerBar.web.js";
 
-export { ToolCallCard } from "./ToolCallCard.js";
-export type { ToolCallCardProps } from "./ToolCallCard.js";
+export { ToolCallCard } from "./ToolCallCard.web.js";
+export type { ToolCallCardProps } from "./ToolCallCard.web.js";
 
-export { ApprovalPrompt } from "./ApprovalPrompt.js";
-export type { ApprovalPromptProps } from "./ApprovalPrompt.js";
+export { ApprovalPrompt } from "./ApprovalPrompt.web.js";
+export type { ApprovalPromptProps } from "./ApprovalPrompt.web.js";
 
 export { useAgentStream } from "./useAgentStream.js";
 export type {

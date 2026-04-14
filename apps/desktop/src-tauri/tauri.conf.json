@@ -34,12 +34,39 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "__comment__signing": "TODO(signing): populate `signingIdentity` with an Apple Developer ID Application certificate (e.g. `Developer ID Application: Voyagent, Inc. (TEAMID)`). Also set `providerShortName` and `entitlements` for notarization. CI reads APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID from secrets — see apps/desktop/README.md.",
+      "signingIdentity": null,
+      "providerShortName": null,
+      "entitlements": null
+    },
+    "windows": {
+      "__comment__signing": "TODO(signing): populate `certificateThumbprint` with the SHA-1 thumbprint of an EV or OV code-signing certificate installed in the build runner's cert store. CI reads WINDOWS_CERTIFICATE (base64 PFX) and WINDOWS_CERTIFICATE_PASSWORD from secrets — see apps/desktop/README.md.",
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": "http://timestamp.digicert.com"
+    }
   },
   "plugins": {
     "shell": {
-      "open": true
+      "open": "^https?://|^mailto:|^voyagent://"
     },
-    "dialog": {}
+    "dialog": {},
+    "deep-link": {
+      "desktop": {
+        "schemes": ["voyagent"]
+      }
+    },
+    "updater": {
+      "__comment__generate_keys": "Run `pnpm tauri signer generate -w ~/.tauri/voyagent-updater.key` to generate an Ed25519 keypair. Copy the PUBLIC key into `pubkey` below; keep the private key OUT of the repo. CI exposes it as TAURI_SIGNING_PRIVATE_KEY + TAURI_SIGNING_PRIVATE_KEY_PASSWORD env vars consumed by `tauri build`.",
+      "__comment__manifest": "The `endpoints` array is polled on launch. Host a JSON manifest describing the latest release (version, notes, per-platform download URL + signature). Tauri's docs show the schema: https://tauri.app/plugin/updater/. Replace the placeholder URL with your CDN / GitHub Releases endpoint before shipping.",
+      "__comment__deploy": "Manifest deploy flow: (1) `tauri build` emits *.sig files per artifact; (2) CI uploads artifacts + signatures to the CDN; (3) CI writes/updates latest.json with a new `version` and the base64 signatures from the *.sig files; (4) clients pick it up on next launch.",
+      "pubkey": "REPLACE_ME_WITH_TAURI_SIGNER_PUBLIC_KEY",
+      "endpoints": [
+        "https://releases.voyagent.example/desktop/{{target}}/{{arch}}/{{current_version}}"
+      ],
+      "dialog": false
+    }
   }
 }

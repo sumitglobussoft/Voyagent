@@ -40,7 +40,7 @@ The driver rejects any `country` other than `"IN"` with
 | `BFH01` | File Header                         | `BSPReport.country/period/currency`        |
 | `BKS24` | Agent Ticketing Record (sale)       | `BSPTransaction(kind=SALE)`                |
 | `BKS39` | Refund Record                       | `BSPTransaction(kind=REFUND)`              |
-| `BKS45` | Exchange / Reissue Record           | `BSPTransaction(kind=REFUND)` (see note)   |
+| `BKS45` | Exchange / Reissue Record           | `BSPTransaction(kind=EXCHANGE)`            |
 | `BKS46` | Agency Debit Memo (ADM) Record      | `BSPTransaction(kind=ADM)`                 |
 | `BKS47` | Agency Credit Memo (ACM) Record     | `BSPTransaction(kind=ACM)`                 |
 | `BFT99` | File Trailer                        | record count + control total validation    |
@@ -48,10 +48,9 @@ The driver rejects any `country` other than `"IN"` with
 Record codes outside this list are logged at `DEBUG` and skipped — the
 file parses as long as its header and trailer are present.
 
-Note on exchanges: `BKS45` is treated as a refund-shaped canonical
-transaction in v0. A future pass can split exchanges out cleanly once
-`BSPTransactionKind.EXCHANGE` exists; today the canonical enum does not
-include one.
+Note on exchanges: `BKS45` maps to `BSPTransactionKind.EXCHANGE`. The
+signed `net_amount` is preserved — negative when the passenger is owed
+money on re-fare, positive when additional collection is due.
 
 ## Configuration
 

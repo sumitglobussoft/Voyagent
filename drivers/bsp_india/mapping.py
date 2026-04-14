@@ -122,11 +122,12 @@ def _haf_transaction_kind(record: HAFTransactionRecord) -> BSPTransactionKind:
     if isinstance(record, BKS39RefundRecord):
         return BSPTransactionKind.REFUND
     if isinstance(record, BKS45ExchangeRecord):
-        # Exchange is an "in-place" reissue — canonically we treat it as
-        # a refund-shaped transaction whose document_number points at the
-        # new ticket. Callers that need to treat exchanges separately can
-        # inspect the underlying HAF record.
-        return BSPTransactionKind.REFUND
+        # Exchange is an "in-place" reissue. ``document_number`` points at
+        # the new ticket; the signed ``net_amount`` carries the direction
+        # of the re-fare (negative when the passenger is owed money,
+        # positive when they owe). Canonically distinct from REFUND since
+        # v1 of ``BSPTransactionKind``.
+        return BSPTransactionKind.EXCHANGE
     if isinstance(record, BKS46ADMRecord):
         return BSPTransactionKind.ADM
     if isinstance(record, BKS47ACMRecord):
@@ -221,8 +222,13 @@ def haf_file_to_bsp_report(haf: HAFFile, tenant_id: EntityId) -> BSPReport:
     The report aggregates:
 
     * ``sales_total``       — sum of BKS24 ``gross_fare``.
-    * ``refund_total``      — sum of BKS39 / BKS45 ``net_amount``
-                              (already signed, typically negative).
+    * ``refund_total``      — sum of BKS39 (REFUND) and BKS45 (EXCHANGE)
+                              ``net_amount`` (already signed). Refunds
+                              are typically negative; exchanges can be
+                              either sign depending on re-fare direction.
+                              The aggregate remains useful as a combined
+                              "non-sale movement" figure for remittance
+                              reconciliation.
     * ``commission_total``  — sum of BKS24 ``commission``.
     * ``net_remittance``    — sum of every transaction's ``net``
                               (== the BSP control total modulo rounding).

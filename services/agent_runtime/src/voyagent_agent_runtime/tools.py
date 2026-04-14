@@ -89,6 +89,14 @@ class ToolContext(BaseModel):
     actor_kind: ActorKind
     session_id: EntityId
     turn_id: str
+    actor_role: str = Field(
+        default="agent",
+        description=(
+            "Coarse role of the acting principal. Cross-checked against "
+            "ToolSpec.approval_roles in invoke_tool so a user who lacks "
+            "the role cannot approve their own action."
+        ),
+    )
     approvals: dict[str, bool] = Field(default_factory=dict)
     extensions: dict[str, Any] = Field(default_factory=dict)
 
@@ -103,9 +111,10 @@ class ToolInvocationOutcome(BaseModel):
 
     model_config = _runtime_config()
 
-    kind: Literal["success", "error", "approval_needed"]
+    kind: Literal["success", "error", "approval_needed", "permission_denied"]
     output: dict[str, Any] | None = None
     error_message: str | None = None
+    message: str | None = None
     approval_id: str | None = None
     approval_summary: str | None = None
     audit_id: EntityId | None = None
@@ -342,7 +351,48 @@ async def invoke_tool(
             error_message=f"Input validation failed for {name!r}: {exc.message}",
         )
 
-    # 2. approval gating
+    # 2. RBAC — short-circuit BEFORE the approval gate so a user who
+    # lacks the role can never self-approve their own action. Empty
+    # approval_roles on an approval-required tool means "any
+    # authenticated role may be the approver" and falls through to the
+    # regular approval gate.
+    if (
+        spec.approval_required
+        and spec.approval_roles
+        and ctx.actor_role not in spec.approval_roles
+    ):
+        now = datetime.now(timezone.utc)
+        audit = AuditEvent(
+            id=_uuid7_like(),
+            tenant_id=ctx.tenant_id,
+            actor_id=ctx.actor_id,
+            actor_kind=ctx.actor_kind,
+            tool=name,
+            inputs=_jsonable(tool_input),
+            approval_required=True,
+            started_at=now,
+            completed_at=now,
+            status=AuditStatus.REJECTED,
+            error=(
+                f"permission_denied: role {ctx.actor_role!r} not in "
+                f"approval_roles={list(spec.approval_roles)}"
+            ),
+        )
+        await audit_sink.write(audit)
+        return ToolInvocationOutcome(
+            kind="permission_denied",
+            message=(
+                f"role {ctx.actor_role!r} not in "
+                f"approval_roles={list(spec.approval_roles)}"
+            ),
+            error_message=(
+                f"Role {ctx.actor_role!r} is not permitted to invoke "
+                f"tool {name!r}."
+            ),
+            audit_id=audit.id,
+        )
+
+    # 3. approval gating
     approval_id = _approval_id_for(ctx.turn_id, name)
     if spec.side_effect and spec.approval_required:
         granted = ctx.approvals.get(approval_id)
@@ -374,7 +424,7 @@ async def invoke_tool(
                 audit_id=audit.id,
             )
 
-    # 3. run with audit
+    # 4. run with audit
     audit_id: EntityId | None = None
     audit: AuditEvent | None = None
     if spec.side_effect:

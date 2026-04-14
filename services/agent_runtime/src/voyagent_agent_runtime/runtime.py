@@ -38,6 +38,10 @@ from .domain_agents.ticketing_visa import TicketingVisaAgent
 from .drivers import DriverRegistry, build_default_registry
 from .offer_cache import InMemoryOfferCache, build_offer_cache
 from .orchestrator import Orchestrator
+from .passenger_resolver import (
+    InMemoryPassengerResolver,
+    build_passenger_resolver,
+)
 from .session import InMemorySessionStore, SessionStore
 from .tenant_registry import (
     EnvCredentialResolver,
@@ -122,6 +126,9 @@ class DefaultRuntime:
     session_store: SessionStore
     orchestrator: Orchestrator
     domain_agents: dict[str, DomainAgent]
+    passenger_resolver: InMemoryPassengerResolver = field(
+        default_factory=InMemoryPassengerResolver
+    )
     driver_registry: DriverRegistry | None = field(default=None)
     engine: "AsyncEngine | None" = field(default=None)
     offer_cache: OfferCache | None = field(default=None)
@@ -275,13 +282,19 @@ def build_default_runtime(
         )
         driver_registry = None
 
-    # Wire the offer cache into any driver that accepts one (Amadeus). Use
-    # duck typing — drivers that don't carry a ``_offer_cache`` attribute
-    # remain unaffected.
+    # Build a passenger resolver. v0 is always the in-memory resolver;
+    # the factory will switch to a storage-backed implementation once
+    # the passenger table lands in ``schemas/storage``.
+    passenger_resolver = build_passenger_resolver(engine=engine)
+
+    # Wire the offer cache + passenger resolver into any driver that
+    # accepts them (Amadeus for both today). Duck-typed — drivers without
+    # these attributes remain unaffected.
     if driver_registry is not None:
         for driver in driver_registry.drivers():
             if getattr(driver, "name", None) == "amadeus":
                 setattr(driver, "_offer_cache", offer_cache)
+                setattr(driver, "_passenger_resolver", passenger_resolver)
 
     ticketing = TicketingVisaAgent(client=anthropic_client, audit_sink=audit_sink)
     accounting = AccountingAgent(client=anthropic_client, audit_sink=audit_sink)
@@ -305,6 +318,7 @@ def build_default_runtime(
         handoff_resolver=_resolver,
         tenant_registry=tenant_registry,
         driver_registry=driver_registry,
+        passenger_resolver=passenger_resolver,
     )
 
     logger.info(
@@ -323,6 +337,7 @@ def build_default_runtime(
         session_store=session_store,
         orchestrator=orchestrator,
         domain_agents=domain_agents,
+        passenger_resolver=passenger_resolver,
         driver_registry=driver_registry,
         engine=engine,
         offer_cache=offer_cache,

@@ -1,0 +1,15 @@
+Voyagent desktop icon set — NOT YET GENERATED.
+
+This directory is expected to contain 32x32.png, 128x128.png,
+128x128@2x.png, icon.icns, and icon.ico once the brand team delivers a
+master 1024x1024 PNG.
+
+To generate the full set from a master:
+
+    cd apps/desktop
+    pnpm tauri icon path/to/voyagent-1024.png
+
+Do not commit the generated binaries until the brand master is final —
+we want one source of truth per release.
+
+Tracking issue: VOY-ICONS.

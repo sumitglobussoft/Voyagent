@@ -36,6 +36,12 @@ export interface UseAgentStreamResult {
   pendingApprovals: ApprovalRequest[];
   isStreaming: boolean;
   error: VoyagentApiError | Error | null;
+  /**
+   * The most recently-seen SSE event id. Populated as events arrive so
+   * the UI can surface "connection state" or persist it across reloads.
+   * The SDK handles reconnection transparently; this is informational.
+   */
+  lastEventId: string | null;
   send: (text: string, approvals?: Record<string, boolean>) => Promise<void>;
   respondToApproval: (approvalId: string, granted: boolean) => Promise<void>;
 }
@@ -154,6 +160,7 @@ export function useAgentStream(
   );
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<VoyagentApiError | Error | null>(null);
+  const [lastEventId, setLastEventId] = useState<string | null>(null);
 
   /**
    * Guards against concurrent sends within one session. We serialize writes
@@ -188,6 +195,7 @@ export function useAgentStream(
         const iter = client.sendMessage(sessionId, {
           message: text,
           approvals: approvals ?? null,
+          onLastEventId: (id) => setLastEventId(id),
         });
 
         for await (const event of iter) {
@@ -278,6 +286,7 @@ export function useAgentStream(
     pendingApprovals,
     isStreaming,
     error,
+    lastEventId,
     send,
     respondToApproval,
   };

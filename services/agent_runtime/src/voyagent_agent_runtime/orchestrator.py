@@ -18,6 +18,7 @@ from ._agent_loop import run_agent_turn
 from .anthropic_client import AnthropicClient
 from .domain_agents.base import DomainAgent, DomainAgentRequest
 from .events import AgentEvent, AgentEventKind
+from .passenger_resolver import PASSENGER_RESOLVER_KEY
 from .prompts import ORCHESTRATOR_SYSTEM_PROMPT
 from .session import Message, Session
 from .tenant_registry import TENANT_REGISTRY_KEY, TenantRegistry
@@ -63,6 +64,7 @@ class Orchestrator:
         handoff_resolver: HandoffResolver,
         tenant_registry: TenantRegistry | None = None,
         driver_registry: Any | None = None,
+        passenger_resolver: Any | None = None,
     ) -> None:
         if tenant_registry is None and driver_registry is None:
             raise ValueError(
@@ -75,12 +77,15 @@ class Orchestrator:
         self._resolve = handoff_resolver
         self._tenant_registry = tenant_registry
         self._drivers = driver_registry
+        self._passenger_resolver = passenger_resolver
 
     async def run_turn(
         self,
         session: Session,
         user_message: str,
         approvals: dict[str, bool] | None = None,
+        *,
+        actor_role: str = "agent",
     ) -> AsyncIterator[AgentEvent]:
         """Run one turn and stream events. Always ends with one FINAL event.
 
@@ -95,12 +100,15 @@ class Orchestrator:
             # Retained for tool handlers that still read the legacy key
             # during the multi-tenant migration.
             extensions[DRIVER_REGISTRY_KEY] = self._drivers
+        if self._passenger_resolver is not None:
+            extensions[PASSENGER_RESOLVER_KEY] = self._passenger_resolver
         ctx = ToolContext(
             tenant_id=session.tenant_id,
             actor_id=session.actor_id,
             actor_kind=session.actor_kind,
             session_id=session.id,
             turn_id=turn_id,
+            actor_role=actor_role,
             approvals=dict(approvals or session.approvals_map()),
             extensions=extensions,
         )

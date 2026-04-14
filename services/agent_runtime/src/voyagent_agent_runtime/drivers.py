@@ -125,6 +125,48 @@ def build_default_registry() -> DriverRegistry:
             "skipping BSPDriver registration"
         )
 
+    # VFS — visa portal. Registered when either a dev username is present
+    # OR a browser-runner Redis URL is explicitly configured, signaling
+    # that an operator intends to use the runner. The domain agent that
+    # actually calls this driver ships in a later round; for now the
+    # registration wires the capability so other subsystems can discover it.
+    should_try_vfs = bool(
+        os.environ.get("VOYAGENT_VFS_USERNAME")
+        or os.environ.get("VOYAGENT_BROWSER_REDIS_URL")
+    )
+    if should_try_vfs:
+        try:
+            from drivers.vfs import VFSConfig, VFSDriver
+            from voyagent_browser_runner import (
+                BrowserRunnerClient,
+                BrowserRunnerSettings,
+                build_queue,
+            )
+
+            browser_settings = BrowserRunnerSettings()
+            browser_queue = build_queue(browser_settings)
+            runner_client = BrowserRunnerClient(browser_queue)
+            vfs_config = VFSConfig()
+            vfs_driver = VFSDriver(runner_client, vfs_config)
+            registry.register("VisaPortalDriver", vfs_driver)
+            logger.info(
+                "driver registry: registered VFS as VisaPortalDriver "
+                "(browser_runner queue=%s)",
+                browser_settings.queue_name,
+            )
+        except Exception:  # noqa: BLE001
+            logger.info(
+                "driver registry: VFS registration skipped — browser-runner "
+                "or deps unavailable",
+                exc_info=True,
+            )
+    else:
+        logger.info(
+            "driver registry: VOYAGENT_VFS_USERNAME and "
+            "VOYAGENT_BROWSER_REDIS_URL unset; skipping VisaPortalDriver "
+            "registration"
+        )
+
     return registry
 
 

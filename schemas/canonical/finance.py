@@ -286,6 +286,7 @@ class JournalEntry(Timestamps):
 class BSPTransactionKind(StrEnum):
     SALE = "sale"
     REFUND = "refund"
+    EXCHANGE = "exchange"  # Reissue / in-place exchange (BKS45 in BSP India)
     ADM = "adm"          # Agency Debit Memo
     ACM = "acm"          # Agency Credit Memo
     COMMISSION = "commission"

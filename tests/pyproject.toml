@@ -8,10 +8,28 @@ dependencies = [
     "pytest-asyncio>=0.24",
     "sqlalchemy>=2.0",
     "aiosqlite>=0.20",
+    "cryptography>=42",
+    "svix>=1.39",
+    "respx>=0.21",
+    "httpx>=0.27",
+    "pyjwt[crypto]>=2.9",
+    "fastapi>=0.115",
     "voyagent-schemas-canonical",
     "voyagent-schemas-storage",
     "voyagent-agent-runtime",
+    "voyagent-api",
+    "voyagent-browser-runner",
+    "voyagent-driver-vfs",
 ]
+
+[tool.uv.sources.voyagent-api]
+workspace = true
+
+[tool.uv.sources.voyagent-browser-runner]
+workspace = true
+
+[tool.uv.sources.voyagent-driver-vfs]
+workspace = true
 
 [build-system]
 requires = ["hatchling"]

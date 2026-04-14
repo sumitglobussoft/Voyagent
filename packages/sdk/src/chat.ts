@@ -75,4 +75,12 @@ export interface SendMessageInput {
   approvals?: Record<string, boolean> | null;
   /** Optional abort signal — closing the underlying SSE stream. */
   signal?: AbortSignal;
+  /**
+   * Called once with each `id:` value observed on the SSE stream. Useful
+   * for UI state that wants to display "last seen event id" or persist
+   * it across a page reload. The SDK itself already threads the id
+   * through on automatic reconnection — callers don't have to feed it
+   * back.
+   */
+  onLastEventId?: (id: string) => void;
 }

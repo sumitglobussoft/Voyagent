@@ -71,8 +71,10 @@ def test_haf_to_bsp_report_maps_all_records(
 
     kinds = [t.kind for t in report.transactions]
     assert kinds.count(BSPTransactionKind.SALE) == 2
-    # BKS39 and BKS45 are both modelled as REFUND in v0.
-    assert kinds.count(BSPTransactionKind.REFUND) == 2
+    # BKS39 → REFUND, BKS45 → EXCHANGE (distinct kinds since the
+    # canonical enum gained EXCHANGE).
+    assert kinds.count(BSPTransactionKind.REFUND) == 1
+    assert kinds.count(BSPTransactionKind.EXCHANGE) == 1
     assert kinds.count(BSPTransactionKind.ADM) == 1
     assert kinds.count(BSPTransactionKind.ACM) == 1
 

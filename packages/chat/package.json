@@ -3,13 +3,14 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "React chat UI for the Voyagent agent runtime (components, hooks, types).",
+  "description": "React chat UI for the Voyagent agent runtime (components, hooks, types). Ships web and React Native builds via conditional subpath exports.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "react-native": "./dist/index.native.js",
+      "default": "./dist/index.js"
     },
     "./styles.css": "./dist/styles.css"
   },
@@ -25,8 +26,17 @@
   "peerDependencies": {
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-native": "*",
     "@voyagent/core": "workspace:*",
     "@voyagent/sdk": "workspace:*"
+  },
+  "peerDependenciesMeta": {
+    "react-dom": {
+      "optional": true
+    },
+    "react-native": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/react": "^19.0.0",
