@@ -116,6 +116,7 @@ export class VoyagentClient {
       },
       {
         onLastEventId: input.onLastEventId,
+        fetchImpl: this.#fetch,
         reconnect: {
           isTerminalEvent: (ev) =>
             ev.event === "agent_event" &&

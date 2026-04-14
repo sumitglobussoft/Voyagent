@@ -212,7 +212,21 @@ class VFSDriver:
                 self.name,
                 "VFS book_appointment: runner did not return an appointment_at.",
             )
-        return datetime.fromisoformat(raw).astimezone(timezone.utc)
+        try:
+            parsed = datetime.fromisoformat(raw)
+        except ValueError as exc:
+            raise PermanentError(
+                self.name,
+                f"vfs: browser runner returned an unparseable appointment_at {raw!r}.",
+            ) from exc
+        # WHY: a naive datetime would be coerced via host-local tz, which makes the
+        # UTC value depend on where the worker happens to run — a real bug for SaaS.
+        if parsed.tzinfo is None:
+            raise PermanentError(
+                self.name,
+                f"vfs: browser runner returned a naive datetime {raw!r}; expected ISO 8601 with offset or Z.",
+            )
+        return parsed.astimezone(timezone.utc)
 
     async def read_status(self, application_ref: str) -> VisaStatus:
         inputs = {

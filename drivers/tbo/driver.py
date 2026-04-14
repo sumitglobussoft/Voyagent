@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import logging
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation as decimal_InvalidOperation
 from typing import Any, ClassVar
+
+from pydantic import ValidationError
 
 from drivers._contracts.errors import (
     CapabilityNotSupportedError,
@@ -196,8 +198,20 @@ def _parse_search_offers(raw: Any) -> list[HotelOffer]:
     hotels = (raw.get("HotelSearchResult") or {}).get("HotelResults") or []
     offers: list[HotelOffer] = []
     for h in hotels:
+        hotel_id = str(h.get("HotelCode") or "")
+        raw_country = h.get("CountryCode")
+        # Only accept a clean 2-letter upper ISO-alpha-2 country code. Anything
+        # else (1-letter, 3-letter, empty, None, mixed case like "ind") is a
+        # vendor data-quality miss; fabricating "XX" would poison the offer.
+        if not (isinstance(raw_country, str) and len(raw_country) == 2 and raw_country.isalpha()):
+            logger.debug(
+                "tbo._parse_search_offers: skipping offer with bad CountryCode %r (hotel_id=%r)",
+                raw_country,
+                hotel_id,
+            )
+            continue
+        country = raw_country.upper()
         name = str(h.get("HotelName") or "Unknown hotel")
-        country = str(h.get("CountryCode") or "XX").upper()[:2] or "XX"
         rates = h.get("Rooms") or []
         first_rate = rates[0] if rates else {}
         price_total = first_rate.get("TotalFare") or first_rate.get("Price") or 0
@@ -208,13 +222,9 @@ def _parse_search_offers(raw: Any) -> list[HotelOffer]:
         )
         try:
             cost = Money(amount=Decimal(str(price_total)), currency=str(currency))
-        except Exception:
-            # Skip any offer we can't price cleanly.
-            continue
-        offers.append(
-            HotelOffer(
+            offer = HotelOffer(
                 property_name=name,
-                property_ref=str(h.get("HotelCode") or ""),
+                property_ref=hotel_id,
                 address_country=country,
                 cost=cost,
                 board_type=str(first_rate.get("MealType") or "room_only"),
@@ -227,7 +237,16 @@ def _parse_search_offers(raw: Any) -> list[HotelOffer]:
                 ),
                 offer_ref=str(first_rate.get("BookingCode") or h.get("HotelCode") or ""),
             )
-        )
+        except (ValidationError, ValueError, decimal_InvalidOperation) as exc:
+            logger.debug(
+                "tbo._parse_search_offers: skipping offer (hotel_id=%r, currency=%r, price=%r): %s",
+                hotel_id,
+                currency,
+                price_total,
+                exc,
+            )
+            continue
+        offers.append(offer)
     return offers
 
 

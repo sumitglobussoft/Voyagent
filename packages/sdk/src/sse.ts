@@ -54,6 +54,12 @@ export interface StreamSSEOptions<T = unknown> {
   onEvent?: (ev: SSEEvent<T>) => void;
   /** Reconnect configuration. Omit to disable automatic reconnection. */
   reconnect?: SSEReconnectOptions<T>;
+  /**
+   * Inject a custom fetch (e.g. for tests or MSW). Defaults to
+   * `globalThis.fetch`. `VoyagentClient` threads its own `fetchImpl`
+   * through here so the DI path also covers the SSE surface.
+   */
+  fetchImpl?: typeof fetch;
 }
 
 const DEFAULT_MAX_RETRIES = 5;
@@ -105,6 +111,7 @@ export async function* streamSSE<T = unknown>(
   const backoffMs = opts.reconnect?.backoffMs ?? defaultBackoffMs;
   const isTerminal = opts.reconnect?.isTerminalEvent ?? defaultIsTerminal;
   const reconnectEnabled = opts.reconnect !== undefined;
+  const fetchImpl = opts.fetchImpl ?? ((u, i) => globalThis.fetch(u, i));
 
   let lastEventId: string | undefined;
   let sawTerminal = false;
@@ -119,10 +126,14 @@ export async function* streamSSE<T = unknown>(
     }
 
     try {
-      const iter = runOneStream<T>(url, {
-        ...init,
-        headers: attemptHeaders,
-      });
+      const iter = runOneStream<T>(
+        url,
+        {
+          ...init,
+          headers: attemptHeaders,
+        },
+        fetchImpl,
+      );
       for await (const ev of iter) {
         if (ev.id !== undefined) {
           lastEventId = ev.id;
@@ -164,8 +175,9 @@ export async function* streamSSE<T = unknown>(
 async function* runOneStream<T = unknown>(
   url: string,
   init?: RequestInit,
+  fetchImpl: typeof fetch = (u, i) => globalThis.fetch(u, i),
 ): AsyncIterable<SSEEvent<T>> {
-  const response = await fetch(url, init);
+  const response = await fetchImpl(url, init);
 
   if (!response.ok) {
     const raw = await response.text().catch(() => "");

@@ -27,12 +27,12 @@ export function Hero() {
           Run your travel agency from one chat.
         </h1>
         <p className="mt-6 max-w-2xl text-lg leading-relaxed text-slate-600 md:text-xl">
-          Voyagent is an agentic operating system that collapses the eight
-          to fifteen tools your team touches every day &mdash; GDS,
-          consolidators, hotel banks, visa portals, payment rails,
-          accounting &mdash; into one conversation. Your staff ask; Voyagent
-          quotes, books, invoices and reconciles, with human approval on
-          every irreversible step.
+          Real-time agentic chat, approval-gated tool calls, integrated
+          reports &mdash; shipping incrementally to Indian travel agencies.
+          Today you get chat with an agent that drafts tickets, an enquiry
+          inbox you can promote into a booking conversation in one click,
+          and aging reports on your receivables and payables backed by a
+          double-entry ledger.
         </p>
 
         <div className="mt-10 flex flex-col items-center gap-3 sm:flex-row">
@@ -51,10 +51,10 @@ export function Hero() {
         </div>
 
         <dl className="mt-12 grid w-full max-w-3xl grid-cols-2 gap-6 border-t border-slate-200 pt-10 text-left md:grid-cols-4">
-          <HeroStat value="1 chat" label="Replaces 8&ndash;15 tools" />
-          <HeroStat value="3 domains" label="Ticketing, Hotels, Accounting" />
-          <HeroStat value="Vendor-agnostic" label="By architecture" />
-          <HeroStat value="Audit-ready" label="Approvals on every side-effect" />
+          <HeroStat value="3 agents" label="Ticketing, Hotels, Accounting" />
+          <HeroStat value="SSE streaming" label="Real-time chat with tool use" />
+          <HeroStat value="Approvals inbox" label="Finance gates every side-effect" />
+          <HeroStat value="Aging reports" label="Receivables &amp; payables, live" />
         </dl>
       </div>
     </section>

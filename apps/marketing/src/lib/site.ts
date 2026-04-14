@@ -35,6 +35,7 @@ export const NAV_LINKS = [
   { href: "/integrations", label: "Integrations" },
   { href: "/security", label: "Security" },
   { href: "/pricing", label: "Pricing" },
+  { href: "/changelog", label: "Changelog" },
   { href: "/docs/ARCHITECTURE", label: "Docs" },
 ] as const;
 
@@ -50,6 +51,7 @@ export const FOOTER_LINKS = {
   Company: [
     { href: "/about", label: "About" },
     { href: "/contact", label: "Contact" },
+    { href: "/changelog", label: "Changelog" },
   ],
   Resources: [
     { href: "/docs/ARCHITECTURE", label: "Architecture doc" },

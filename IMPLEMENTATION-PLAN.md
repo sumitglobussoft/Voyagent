@@ -1,129 +1,227 @@
 # Voyagent Implementation Plan
 
-Living punch-list for the v0 alpha. Pairs with [README.md](./README.md) (what exists) and [docs/DECISIONS.md](./docs/DECISIONS.md) (why).
+Living punch-list for the v0 alpha as of 2026-04-14. Pairs with [README.md](./README.md) (what exists) and [docs/DECISIONS.md](./docs/DECISIONS.md) (why).
 
 ## 1. Shipped
 
-What is in main today, grouped by area.
+Everything currently in `main`, grouped by domain. Most recent pushes: `8182e1a`, `b194818`, `6b96dc9`, `178fcad`; the previous session ended at `3fb9a25`.
 
 ### Auth (in-house)
 - `POST /api/auth/sign-up`, `/sign-in`, `/refresh`, `/sign-out`, `GET /api/auth/me`.
 - Argon2id password hashing; HS256 access JWT (1h TTL); opaque refresh token (30d, single-use rotation).
 - Redis-backed JWT revocation via jti denylist.
-- `users` + `auth_refresh_tokens` tables; fixtures updated for password_hash.
+- `users` + `auth_refresh_tokens` tables.
+- `email_verified` gate enforced on sign-in, with two distinguishable 401 detail codes: `email_not_verified` vs `invalid_credentials`.
+- Stub email-verification delivery: `POST /api/auth/send-verification-email` (logs link to stdout) and `POST /api/auth/verify-email` (Redis-backed token, 24h TTL).
+- `VOYAGENT_AUTH_SKIP_EMAIL_VERIFICATION=true` is set on the prod host until a real delivery provider lands; new signups there are `email_verified=true` for now.
 
 ### Chat + agent runtime
 - `POST /chat/sessions`, `GET /chat/sessions`, `POST /chat/sessions/{id}/messages` (SSE stream).
-- Real Anthropic client with prompt caching.
-- In-process orchestrator in `services/agent_runtime/src/voyagent_agent_runtime/orchestrator.py`, streaming events to clients over FastAPI SSE.
+- Real Anthropic client with prompt caching; bounded exponential backoff on `RateLimitError`, `APIConnectionError`, and 5xx `APIStatusError` with `Retry-After` awareness.
+- In-process orchestrator in `services/agent_runtime/src/voyagent_agent_runtime/orchestrator.py` streaming events to clients over FastAPI SSE.
+- `ToolSpec.output_schema` validated at runtime, with one automatic repair-retry on schema failure.
 - Approval-gated tool calls through `tools.py` + `_agent_loop.py`.
-- Domain agents: `ticketing_visa`, `accounting`, `hotels_holidays` (new this session).
+- Domain agents: `ticketing_visa`, `accounting`, `hotels_holidays`.
+
+### Approvals
+- `/api/approvals` (list, get, resolve) with lazy expiry sweep and cross-tenant → 404.
+- `/app/approvals` page: pending inbox + recent history, Approve / Reject Server Actions.
+- Postgres-backed `pending_approvals` with TTL and status enum; `resolve_approval` is tenant-scoped.
+- Wire note: `payload` and `resolved_by_user_id` fields are always empty in v0 because the storage schema for them is deferred. The response shape is locked so the UI is stable.
+
+### Enquiries
+- `enquiries` table + `enquiry_status` enum (`new | quoted | booked | cancelled`, terminal states sticky).
+- Migration `0006_enquiries`.
+- Full CRUD: `POST /api/enquiries`, `GET /api/enquiries` (status / q search + pagination), `GET/PATCH /api/enquiries/{id}`, `POST /api/enquiries/{id}/promote-to-session`.
+- UI: `/app/enquiries` list + filter + search, `/app/enquiries/new` create form, `/app/enquiries/{id}` detail + edit + promote-to-chat + two-step cancel.
+- Nav links in `apps/web/app/layout.tsx`.
+- New helper: `apps/web/lib/api.ts` (server-side authenticated fetch with cookie forwarding to the loopback nginx listener).
 
 ### Reports
 - `GET /reports/receivables`, `/reports/payables`, `/reports/itinerary`, all tenant-isolated.
-- Receivables and payables return empty-shape placeholders until an invoice driver lands.
+- Receivables and payables now read real data from `invoices` + `bills` + `journal_entries` with 0-30 / 31-60 / 61-90 / 90+ aging buckets computed server-side.
 - Itinerary reads from the session store.
 
 ### Hotels
-- Canonical types: `HotelRoom`, `HotelRate`, `HotelProperty`, `HotelSearchResult`, `BoardBasis` enum in `schemas/canonical/travel.py`.
-- `drivers/tbo/` with HTTP wiring for search + check_rate; book/cancel/read raise `CapabilityNotSupportedError`.
+- Canonical types: `HotelRoom`, `HotelRate`, `HotelProperty`, `HotelSearchResult`, `BoardBasis` enum.
+- `drivers/tbo/` HTTP wiring for search + check_rate; book/cancel/read raise `CapabilityNotSupportedError`.
 
 ### Drivers
-- `drivers/_contracts/` capability Protocols + error types are complete.
-- `drivers/amadeus` partial (self-service sandbox), `drivers/tbo` partial (search/check_rate), `drivers/tally` / `drivers/bsp_india` / `drivers/vfs` at skeleton stage.
+- `drivers/_contracts/` capability Protocols + error types complete.
+- `drivers/amadeus` partial (self-service sandbox), with JSON-decode failures mapped to `TransientError`.
+- `drivers/tbo` partial (search + check_rate).
+- `drivers/bsp_india` with the shipped 164-code IATA airline allow-list enforced on HAF rows; HAF parser trailing `\r` strip fix.
+- `drivers/vfs` MFA selector now raises `PermanentError("mfa_required")` rather than `AuthenticationError`.
+- `drivers/tally` skeleton.
 
 ### Storage
-- Tables: `users`, `tenants`, `sessions`, `messages`, `pending_approvals`, `tenant_credentials`, `audit_events`, `auth_refresh_tokens`, `passengers`.
-- Alembic head: `0003_passengers`.
-- `StoragePassengerResolver` replaces the old `NotImplementedError`; tenant isolation via composite unique indexes `(tenant_id, email)` and `(tenant_id, passport_number)`.
+- Tables: `users`, `tenants`, `sessions`, `messages`, `pending_approvals`, `tenant_credentials`, `audit_events`, `auth_refresh_tokens`, `passengers`, `invoices`, `bills`, `ledger_accounts`, `journal_entries`, `enquiries`.
+- Alembic head: `0006_enquiries`. Full chain: `0001_initial → 0002_inhouse_auth → 0003_passengers → 0004_approval_ttl → 0005_invoices_ledger → 0006_enquiries`.
+- `build_journal_entry` enforces debit == credit in code.
+- `StoragePassengerResolver` is tenant-isolated via composite unique indexes on `(tenant_id, email)` and `(tenant_id, passport_number)`.
 - `VOYAGENT_STORES=memory` env toggle still forces in-memory stores for dev/tests.
 
 ### Deployment
-- Live at [voyagent.globusdemos.com](https://voyagent.globusdemos.com).
+- Live at [voyagent.globusdemos.com](https://voyagent.globusdemos.com) on commit `8182e1a` (tip of `origin/main`).
 - Ubuntu 22.04 host, nginx + certbot for TLS.
-- systemd units: `voyagent-api.service` (uvicorn :8010), `voyagent-web.service` (next start :3011), `voyagent-marketing.service` (next start :3012).
-- Native Postgres 16 (`/etc/postgresql/16/main/`) and Redis on :6379.
-- Nginx vhost routes `/` to marketing, `/app/` to web, `/api/` to api (prefix-stripped), plus a loopback :8081 listener for the web app's server-side fetches.
-- Server env at `/opt/voyagent/.env.prod`; shared master Postgres credentials at `/etc/voyagent/postgres-master.env`.
-- Python deps via `uv`, Node via nvm (v24) + pnpm via corepack. No Docker in the request path.
+- systemd units: `voyagent-api.service` (uvicorn :8010), `voyagent-web.service` (next start :3011), `voyagent-marketing.service` (next start :3012). All three active.
+- Native Postgres 16 and Redis on :6379.
+- Nginx vhost routes `/` → marketing, `/app/` → web, `/api/` → api (prefix-stripped), plus a loopback :8081 listener the web app uses for server-side fetches.
+- Alembic at head `0006_enquiries` in prod.
 
 ### Tests
-- `tests/api/`: auth happy path + `test_auth_errors.py`, chat, reports.
-- `tests/agent_runtime/`: orchestrator, tools, domain agents, approvals, passenger resolver (pg), plus new `test_orchestrator_errors.py`, `test_approvals.py`, `test_hotels_holidays.py`.
-- `tests/drivers/{amadeus,bsp_india,tally,vfs,tbo}/`: per-driver happy path + `test_errors.py` additions.
-- `tests/canonical/`: schema invariants + new `test_hotel.py`.
-- `tests/storage/test_models.py`: fixtures updated for password_hash.
-- `tests/e2e/` + `tests/live/`: Playwright and live probes rewritten to test the in-house auth gating contract.
+- ~250 new tests this session across Python and TypeScript, for a `pytest --collect-only` total of **754**.
+- 94 driver tests across `amadeus` / `bsp` / `tally` / `vfs` / `tbo` (client, parser, dispatch, XML builders, canonical mapping).
+- 55 API tests (approvals, enquiries, storage round-trip).
+- 56 service tests (main wiring, revocation, domain agents, prompts, tenant registry, browser runner queue / handlers / artifacts).
+- 47 TypeScript package tests (`@voyagent/sdk` client / SSE / errors; `@voyagent/chat` components).
+- Vitest configs added to `packages/sdk` and `packages/chat`.
+- All eight previously xfailed bugs are closed: tool output schema + retry-once, Anthropic rate-limit / connection retry with `Retry-After`, `email_verified` gating, Amadeus JSON decode mapping, BSP India HAF airline allow-list, VFS MFA routing, approval TTL + status enum, cross-tenant approval guard.
 
-## 2. Known bugs (must fix before next release)
+## 2. Must fix (known bugs)
 
-Eight issues currently marked xfail. Each must go green before the next tag.
+Seven gaps flagged this session. None block prod today but all need to clear before the next tag.
 
-| # | Bug | Marked by | Impact | Fix sketch |
-|---|---|---|---|---|
-| 1 | Tool output not schema-validated; no retry-once policy | `tests/agent_runtime/test_tools.py` (xfail) | Malformed tool output propagates to the agent and corrupts downstream turns. | Validate each tool result against `ToolSpec.output_schema` in `tools.py`; on failure, retry the call once with a repair hint, then raise. |
-| 2 | Anthropic `RateLimitError` not retried | `tests/agent_runtime/test_orchestrator_errors.py` | First 429 from Anthropic surfaces as a 500 to the chat stream. | Wrap the Anthropic call in `anthropic_client.py` with bounded exponential backoff on `RateLimitError` and `APIStatusError(5xx)`. |
-| 3 | `email_verified` flag exists but sign-in doesn't gate on it | `tests/api/test_auth_errors.py` | Unverified emails can log in and obtain tokens. | Add the check in the sign-in handler in `services/api/.../auth.py`; return 403 with an `email_unverified` code. |
-| 4 | Amadeus `json.JSONDecodeError` on 2xx body propagates raw | `tests/drivers/amadeus/test_errors.py` | Non-JSON 200 from Amadeus crashes the driver instead of raising a typed error. | Catch `JSONDecodeError` in the Amadeus client and raise `TransientError` with the body preview. |
-| 5 | BSP India HAF parser accepts unknown airline codes | `tests/drivers/bsp_india/test_errors.py` | Unknown airline codes silently reconcile as valid. | Validate carrier codes against the shipped IATA set before accepting a HAF row. |
-| 6 | VFS MFA signal routed to `AuthenticationError` | `tests/drivers/vfs/test_errors.py` | Tenants see "bad password" when MFA is actually required. | Detect the MFA selector in the VFS driver and raise `PermanentError("mfa_required")` instead. |
-| 7 | `InMemorySessionStore` has no approval TTL / expiry state | `tests/agent_runtime/test_approvals.py` | Pending approvals never expire in dev/tests. | Add a TTL field + sweeper on approval records; mirror the contract the Postgres store will enforce. |
-| 8 | `resolve_approval` doesn't check actor tenant | `tests/agent_runtime/test_approvals.py` | Cross-tenant approval resolution is possible in principle. | Require `tenant_id` on the resolve call and assert equality with the approval's tenant before mutating. |
+### 2.1 TBO `_parse_search_offers` truncates `CountryCode`
+- **Where.** `drivers/tbo/` search-offer parser.
+- **Impact.** Two-character hard slice drops any offer with a one-letter code; bare `except Exception` silently swallows the drop.
+- **Fix.** Use the raw code; validate against the ISO-3166 alpha-2 set explicitly and raise `TransientError` on malformed rows instead of `except Exception: continue`.
+
+### 2.2 TBO `Money` construction `except Exception`
+- **Where.** same parser.
+- **Impact.** Malformed currency payloads silently drop offers instead of surfacing a data error.
+- **Fix.** Catch the specific `ValueError` / `InvalidOperation` from `Money` construction and map to `TransientError` with the currency preview.
+
+### 2.3 Tally `create_invoice` auto-mints a tenant id
+- **Where.** `drivers/tally/`.
+- **Impact.** Missing `tenant_id` silently creates a tenant record instead of failing; tenant-isolation invariant is violated in principle.
+- **Fix.** Make `tenant_id` required at the driver boundary; raise `PermanentError("tenant_id required")` when absent.
+
+### 2.4 VFS `datetime.fromisoformat` accepts naive datetimes
+- **Where.** `drivers/vfs/`.
+- **Impact.** Naive datetimes are converted to UTC using the host timezone, so scheduled slots shift by the host offset.
+- **Fix.** Reject naive datetimes explicitly; require `tzinfo` on every appointment payload.
+
+### 2.5 SDK `streamSSE` ignores injected `fetchImpl`
+- **Where.** `packages/sdk/src/...` streaming helper.
+- **Failing test.** None today; the docstring oversells testability that isn't actually wired.
+- **Fix.** Plumb `fetchImpl` through to the streaming path; add a vitest that asserts the injected fetch is called.
+
+### 2.6 Approvals `payload` / `resolved_by_user_id` always empty
+- **Where.** `/api/approvals` response shape.
+- **Impact.** UI shows blank payload and resolver identity columns; documented in README but still surfaces as dead fields.
+- **Fix.** Add the two columns to `pending_approvals` in the next migration and thread them through the resolver.
+
+### 2.7 Accounting / orchestrator test regressions from RBAC short-circuit
+- **Where.** `tests/agent_runtime/test_accounting_tools.py`, `tests/agent_runtime/test_orchestrator*.py`.
+- **Impact.** Failing tests on `main`; production runtime unaffected because the RBAC-before-approval ordering is correct.
+- **Fix.** Update the fixtures / expected events to reflect the new short-circuit ordering, or split the orchestrator assertion so the RBAC denial path is its own case.
 
 ## 3. Open product decisions
 
-Five questions that block the next shipped wave. Each has my recommendation.
+Five questions that still need an answer before the next shipped wave closes.
 
 ### 3.1 TBO sandbox credentials
-**Context.** `drivers/tbo` has search and check_rate wired but book/cancel/read are stubbed as `CapabilityNotSupportedError` because we have no sandbox account. Without credentials we cannot integration-test the booking path or validate voucher issuance.
-**Recommendation.** Request TBO sandbox credentials immediately. This is the cheapest unblock on the whole hotels track and promotes the driver from partial to wired with ~2 days of work.
+**Context.** `drivers/tbo` has search + check_rate wired but book / cancel / read raise `CapabilityNotSupportedError` because we have no sandbox account.
+**Recommendation.** Request TBO sandbox credentials immediately. This is the cheapest unblock on the whole hotels track and promotes the driver from partial to wired with about two days of work.
 
 ### 3.2 Second hotels vendor: parallel or sequential?
-**Context.** One-vendor hotels is a demo; two-vendor hotels is what proves the adapter pattern for the domain.
-**Recommendation.** Sequential. Finish TBO through booking first, then scaffold Hotelbeds against the same `HotelSearchDriver` Protocol. Building both in parallel risks baking a TBO-shaped compromise into the contract before it's stressed.
+**Context.** TBO as the only hotels vendor proves nothing about the adapter pattern. Hotelbeds is the obvious second.
+**Recommendation.** Sequential. Finish TBO through booking first, then scaffold Hotelbeds against the same `HotelSearchDriver` Protocol. Building both in parallel risks baking a TBO-shaped compromise into the contract before it is stressed.
 
 ### 3.3 Concurrent sign-in: multi-session or rotation?
-**Context.** Today the refresh token store allows multiple live refresh tokens per user (multi-session). A stricter alternative is single-device rotation where a new sign-in revokes all existing refresh tokens.
-**Recommendation.** Keep multi-session for v0. Travel agency staff work from desktop + mobile + web simultaneously; rotation would log people out constantly. Revisit when we add session-management UI in `apps/web`.
+**Context.** The refresh-token store allows multiple live refresh tokens per user (multi-session). A stricter alternative is single-device rotation where a new sign-in revokes all other refresh tokens.
+**Recommendation.** Keep multi-session for v0. Agency staff work from desktop + mobile + web simultaneously; rotation would log people out constantly. Revisit when we add session-management UI in `apps/web`.
 
-### 3.4 Approval TTL policy
-**Context.** Bug #7 forces a decision: global TTL, per-tool TTL, or none. Today there is no TTL at all.
-**Recommendation.** Per-tool TTL with a sensible global default (say 30 minutes). Irreversible tools (issue_ticket, post_journal_entry) should expire faster than read-only ones; the existing `ToolSpec` already has the hook for this.
+### 3.4 Real email delivery provider
+**Context.** `POST /api/auth/send-verification-email` logs the link to stdout and prod runs with `VOYAGENT_AUTH_SKIP_EMAIL_VERIFICATION=true`. Password reset and any later notification email flow will need the same provider.
+**Recommendation.** Pick Postmark for the first wave. Single transactional-email use case, simple API, EU + US regions, no SES-style AWS account entanglement. Keep a thin provider adapter so SES / SMTP can drop in later.
 
-### 3.5 `ToolSpec.output_schema` enforcement
-**Context.** Bug #1 asks whether tool outputs should be runtime-validated. Today validation is honor-system.
-**Recommendation.** Enforce at runtime with retry-once. The cost is a handful of Pydantic validations per turn; the benefit is that malformed tool output never poisons the conversation memory. This is the foundation for every later agent reliability investment.
+### 3.5 Password-reset flow scope
+**Context.** Same token-in-Redis primitive as email verification, but the delivery channel blocks shipping.
+**Recommendation.** Ship the token issue / consume endpoints now against the stdout-log stub, then flip to the real provider when 3.4 lands. Reuse the `/api/auth/send-verification-email` code path; do not invent a second token type.
 
 ## 4. Next waves
 
-Prioritized roadmap. Do not start Wave N+1 until Wave N's done-when is met.
+Tiered by whether the work depends on external credentials or third-party approvals. Each entry: size (S/M/L), dependencies, done-when.
 
-### Wave 1 — Reliability foundation
-**Title.** Fix the eight xfailed bugs and resolve the five open product decisions.
-**Effort.** M.
-**Dependencies.** None.
-**Done-when.** Zero xfails in `tests/`; IMPLEMENTATION-PLAN section 3 is collapsed to "resolved"; a short ADR lands for each decision in `docs/DECISIONS.md`.
+### Tier A — do next, no external deps
 
-### Wave 2 — Real vendor integrations
-**Title.** TBO sandbox booking end-to-end and Amadeus production credentials.
-**Effort.** L.
-**Dependencies.** Wave 1; TBO sandbox creds delivered (decision 3.1); Amadeus enterprise agreement.
-**Done-when.** `drivers/tbo` promotes book/cancel/read from stub to partial with a passing integration test against the sandbox; `drivers/amadeus` runs against production with at least fare search + PNR create covered by `tests/live/`.
+#### A1. Close the seven known bugs from section 2
+- **Size.** M.
+- **Dependencies.** None.
+- **Done-when.** All seven fixes land, the accounting / orchestrator regressions in 2.7 are green, and a migration adds the two missing approvals columns.
 
-### Wave 3 — Desktop and second vendor
-**Title.** Tally desktop bridge, VFS selector pack, Hotelbeds second vendor.
-**Effort.** L.
-**Dependencies.** Wave 2; Tauri app shell functional enough to host the Tally bridge; at least one tenant-specific VFS selector set.
-**Done-when.** Tally driver can read and post a real ledger entry from the desktop app; VFS driver can log in and submit one form end-to-end; Hotelbeds search returns canonical `HotelSearchResult`s alongside TBO.
+#### A2. Populate `@voyagent/core` with OpenAPI TS codegen
+- **Size.** M.
+- **Dependencies.** None. FastAPI already emits OpenAPI.
+- **Done-when.** `packages/core` publishes generated TS types consumed by `@voyagent/sdk` and `@voyagent/web`; codegen runs in CI and diffs cleanly.
 
-### Wave 4 — Reports data pipeline
-**Title.** Real invoices and ledger tables; receivables/payables wired to real data.
-**Effort.** M.
-**Dependencies.** Wave 3 (Tally posting path proves the ledger contract).
-**Done-when.** New `invoices` and `ledger_entries` tables with Alembic migration; `/reports/receivables` and `/reports/payables` return tenant-real rows instead of empty shape; aging buckets computed server-side.
+#### A3. Password-reset flow
+- **Size.** S.
+- **Dependencies.** 3.5 decision; delivery still on the stdout stub is acceptable for A3.
+- **Done-when.** `POST /api/auth/request-password-reset` + `POST /api/auth/reset-password` land with a Redis token, and the sign-in UI links to the flow.
 
-### Wave 5 — Lifecycle and UX completeness
-**Title.** Passenger enquiry lifecycle, approvals UI, finance override board.
-**Effort.** L.
-**Dependencies.** Waves 1–4.
-**Done-when.** An enquiry can be created, quoted, booked, delivered, and closed without leaving the chat; the web app exposes a full approvals queue with RBAC; accountants have an override board for reconciliation exceptions with a full audit trail.
+#### A4. User profile + tenant settings pages
+- **Size.** M.
+- **Dependencies.** A2 for generated types.
+- **Done-when.** `/app/settings/profile` (name, email, password change) and `/app/settings/tenant` (display name, tenant-level flags) exist and round-trip through the API.
+
+#### A5. Audit-log viewer
+- **Size.** S.
+- **Dependencies.** None; `audit_events` is already populated.
+- **Done-when.** `/app/audit` lists events with actor / action / subject / timestamp, filterable by actor and by entity id.
+
+#### A6. Wire invoice-draft flow from chat
+- **Size.** M.
+- **Dependencies.** None.
+- **Done-when.** "Draft invoice for X" in chat produces a tool-call that writes a draft row to `invoices` and surfaces the id in the reply; approval-gated before final.
+
+#### A7. Playwright E2E for approvals + enquiries
+- **Size.** M.
+- **Dependencies.** None.
+- **Done-when.** `tests/e2e/` covers the approve / reject path end-to-end and the enquiry lifecycle including promote-to-chat and two-step cancel.
+
+### Tier B — blocked on external deps
+
+#### B1. TBO sandbox booking end-to-end
+- **Size.** L.
+- **Dependencies.** 3.1 (TBO sandbox credentials).
+- **Done-when.** `drivers/tbo` promotes book / cancel / read from stub to partial, and `tests/live/` covers a full sandbox booking cycle.
+
+#### B2. Amadeus production + `issue_ticket`
+- **Size.** L.
+- **Dependencies.** Amadeus enterprise agreement.
+- **Done-when.** `drivers/amadeus` runs against production creds, and `tests/live/` covers at least fare search + PNR create + issue_ticket.
+
+#### B3. Tally desktop bridge via Tauri
+- **Size.** L.
+- **Dependencies.** Tauri app shell functional enough to host the bridge; desktop build pipeline.
+- **Done-when.** Tally driver can read and post a real ledger entry through the desktop app on a test tenant machine.
+
+#### B4. VFS selector pack v0
+- **Size.** M.
+- **Dependencies.** At least one tenant-specific VFS selector set.
+- **Done-when.** VFS driver can log in and submit one form end-to-end through the browser runner for one tenant.
+
+#### B5. Hotelbeds as second hotels vendor
+- **Size.** L.
+- **Dependencies.** B1; Hotelbeds sandbox access.
+- **Done-when.** Hotelbeds search returns canonical `HotelSearchResult`s alongside TBO without changes to `HotelSearchDriver`.
+
+#### B6. Real email delivery provider
+- **Size.** S.
+- **Dependencies.** 3.4 decision.
+- **Done-when.** Verification + password-reset emails send via the chosen provider; `VOYAGENT_AUTH_SKIP_EMAIL_VERIFICATION` is unset in prod.
+
+### Tier C — later
+
+#### C1. Reports data pipeline improvements
+- **Size.** L.
+- **Dependencies.** Tier B accounting integrations for realistic multi-currency data.
+- **Done-when.** Multi-currency totals (FX normalised at report-time), trial balance endpoint, and general-ledger drilldown ship; aging buckets remain correct under mixed currencies.
+
+#### C2. Durable workflow engine (Temporal or Hatchet)
+- **Size.** L.
+- **Dependencies.** A real long-running workflow that exceeds what SSE + resumable sessions can handle; see D11 in [docs/DECISIONS.md](./docs/DECISIONS.md).
+- **Done-when.** One nominated workflow (likely visa submission or ticket issuance on slow GDS paths) is re-expressed as a durable workflow with a decision ADR attached.

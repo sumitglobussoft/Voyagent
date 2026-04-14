@@ -83,9 +83,14 @@ class TallyDriver:
         tenant_id: EntityId | None = None,
         ledger_name_resolver: Callable[[EntityId], str] | None = None,
     ) -> None:
+        if tenant_id is None:
+            raise PermanentError(
+                DRIVER_NAME,
+                "tally driver requires an explicit tenant_id; got None.",
+            )
         self._config = config
         self._client = client or TallyClient(config)
-        self._tenant_id: EntityId = tenant_id or _new_entity_id()
+        self._tenant_id: EntityId = tenant_id
         self._ledger_name_resolver = ledger_name_resolver
         # In-memory canonical->Tally id mapping. Runtime should persist
         # this; the driver only keeps the most-recent round-trip so

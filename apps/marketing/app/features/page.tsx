@@ -1,20 +1,16 @@
 import type { Metadata } from "next";
 import {
   Plane,
-  Hotel,
   Calculator,
   FileText,
   Receipt,
-  CreditCard,
   Send,
   Check,
-  AlertTriangle,
   RefreshCcw,
   Search,
   Users,
   Settings,
   User,
-  Download,
 } from "@voyagent/icons";
 
 import { CtaBand } from "@/components/CtaBand";
@@ -25,151 +21,84 @@ import { absoluteUrl } from "@/lib/site";
 export const metadata: Metadata = {
   title: "Features",
   description:
-    "Voyagent feature catalog: agent UX, domain coverage, vendor-agnosticism, finance-grade invariants, security, and tri-platform delivery.",
+    "What Voyagent actually ships today: real-time agentic chat, approval-gated tool calls, enquiries, double-entry reports, per-tenant isolation, in-house auth, native deployment.",
   alternates: { canonical: absoluteUrl("/features") },
 };
 
-const AGENT_UX = [
+// Every card here reflects a capability that is on main and running at
+// voyagent.globusdemos.com as of 2026-04-14. No aspirational items.
+const SHIPPED = [
   {
-    title: "Natural-language enquiry",
+    title: "Real-time agentic chat",
     description:
-      "Paste a WhatsApp forward or type free-form. The orchestrator classifies intent and opens a typed Enquiry.",
+      "SSE streaming from FastAPI with Anthropic prompt caching. Tool calls render inline; chat reconnects replay from Last-Event-ID so dropped networks don't lose context.",
     icon: Send,
   },
   {
-    title: "Streamed responses",
+    title: "Approval-gated tool calls",
     description:
-      "SSE streaming with Last-Event-ID reconnect means long tool runs (fare search, reconciliation) stream progress, not spinners.",
-    icon: RefreshCcw,
-  },
-  {
-    title: "Approval gating on every side-effect",
-    description:
-      "Tools carry side_effect + reversible flags. Irreversible actions always pause for human confirmation.",
+      "Irreversible actions pause for a human. Finance resolves pending calls from /app/approvals with cross-tenant guard and TTL expiry on every ticket.",
     icon: Check,
   },
-];
-
-const DOMAIN = [
   {
-    title: "Ticketing & Visa",
+    title: "Three domain agents",
     description:
-      "Fare search, PNR ops, ticket issue, queue handling, web check-in, visa checklist and appointment tracking.",
+      "ticketing_visa, hotels_holidays, accounting — each with its own scoped tool set. Hotels can't see accounting tools; agents are isolated at the runtime boundary.",
     icon: Plane,
   },
   {
-    title: "Hotels & Holidays",
+    title: "Enquiry CRUD + lifecycle",
     description:
-      "Multi-supplier rate aggregation, package costing, voucher issuance, revisions, post-booking support.",
-    icon: Hotel,
-  },
-  {
-    title: "Accounting & Finance",
-    description:
-      "Invoicing, collections, supplier payments, BSP/card/bank reconciliation, GST/TDS, management reporting.",
-    icon: Calculator,
-  },
-];
-
-const VENDOR = [
-  {
-    title: "Adapter-first by construction",
-    description:
-      "One driver per external system. Canonical model never sees Amadeus or Tally types — add a driver, not a redesign.",
-    icon: Settings,
-  },
-  {
-    title: "Capability manifests",
-    description:
-      "Each driver declares what it can and can't do. The orchestrator selects drivers at runtime per tenant.",
+      "Track enquiries through new → quoted → booked or cancelled. Promote any enquiry into a chat session in one click; the agent inherits the context.",
     icon: FileText,
   },
   {
-    title: "Graceful degradation",
+    title: "Receivables & payables reports",
     description:
-      "When a driver can't auto-post, Voyagent falls back — e.g. a Tally-importable XML instead of a direct post.",
-    icon: AlertTriangle,
-  },
-  {
-    title: "Per-tenant driver isolation",
-    description:
-      "Tenant A's Amadeus credentials and Tenant B's are fully segregated. No cross-tenant driver reuse.",
-    icon: Users,
-  },
-];
-
-const FINANCE = [
-  {
-    title: "Double-entry invariants",
-    description:
-      "Every JournalEntry is debits = credits per currency, enforced in the canonical model, not hoped for.",
+      "0-30 / 31-60 / 61-90 / 90+ aging buckets computed live against the invoices + bills + journal_entries tables. Itinerary report reads straight from chat sessions.",
     icon: Receipt,
   },
   {
-    title: "BSP reconciliation",
+    title: "Double-entry ledger",
     description:
-      "BSPlink India parser matches ticket sales, refunds, commission and flags ADM/ACM candidates with evidence.",
-    icon: Check,
-  },
-  {
-    title: "Append-only audit log",
-    description:
-      "Every side-effect tool call is logged with actor, inputs, outputs, driver invoked, and approval trail.",
-    icon: FileText,
-  },
-  {
-    title: "Per-currency balancing",
-    description:
-      "Books balance per currency, not per aggregate — BOM rupees and DXB dirhams stay legible.",
+      "Every JournalEntry is debits = credits per currency, enforced in the canonical model. Postings from the accounting agent are gated behind the same approval flow.",
     icon: Calculator,
   },
-];
-
-const SECURITY = [
   {
-    title: "Per-tenant credential encryption",
+    title: "Per-tenant isolation",
     description:
-      "Envelope encryption over per-tenant KMS keys. Enterprise BYO-key supported at the vault interface.",
-    icon: CreditCard,
+      "Tenant id is a first-class column on every domain row, every driver invocation, and every audit event. Credentials, data and sessions never cross the tenancy boundary.",
+    icon: Users,
   },
   {
-    title: "RBAC on approval roles",
+    title: "In-house auth",
     description:
-      "agent / senior_agent / accountant / admin / auditor — scoped per domain and action.",
+      "argon2id password hashing, HS256 JWT access tokens (1h), opaque refresh tokens (30d, single-use rotation), httpOnly cookies on web, SecureStore on desktop and mobile.",
     icon: User,
   },
   {
-    title: "Session + action audit",
+    title: "Canonical domain model",
     description:
-      "Auth failures are rate-limited and audit-logged. Every action has a traceable actor.",
+      "Pydantic v2 spec for flights, finance and lifecycle; hotel, visa and transfer skeletons in place. Currency on every money field; no driver types leak upward.",
+    icon: Settings,
+  },
+  {
+    title: "Native deployment",
+    description:
+      "Single Ubuntu host, systemd-supervised Python and Node processes, native Postgres 16 + native Redis 7 + native nginx with certbot TLS. No Docker in the request path.",
     icon: Search,
-  },
-  {
-    title: "Data residency abstraction",
-    description:
-      "DPDP (India) + GDPR-ready. Residency is a platform primitive, not a patch.",
-    icon: Download,
-  },
-];
-
-const DELIVERY = [
-  {
-    title: "Web, desktop, mobile",
-    description:
-      "Next.js web for light users, Tauri desktop for GDS/Tally power users, Expo mobile for reports and approvals.",
-    icon: Plane,
   },
   {
     title: "SSE streaming",
     description:
-      "Server-sent events for chat; reconnection replays from Last-Event-ID so dropped networks don't lose context.",
+      "Server-sent events for chat; reconnection replays from Last-Event-ID. Long tool runs stream progress tokens instead of spinning on a blank screen.",
     icon: RefreshCcw,
   },
   {
-    title: "In-process agent loop",
+    title: "Append-only audit log",
     description:
-      "Real-time agent streaming from an in-process loop in services/agent_runtime — tool calls and progress land in the chat as they happen, no workflow-engine hop.",
-    icon: Check,
+      "Every side-effect tool call records actor, tenant, inputs, outputs, the driver invoked, approvals and timestamps. Auth failures ride the same stream, rate-limited.",
+    icon: FileText,
   },
 ];
 
@@ -179,73 +108,16 @@ export default function FeaturesPage() {
       <section className="border-b border-slate-200 bg-gradient-to-b from-primary-50/40 to-white">
         <div className="mx-auto w-full max-w-shell px-5 py-20 md:px-8 md:py-24">
           <SectionHeader
-            eyebrow="Feature catalog"
-            title="Everything Voyagent ships with — and what's explicitly planned."
-            description="Organized by the six surfaces that matter: agent experience, domain coverage, vendor-agnosticism, finance-grade invariants, security, and delivery."
+            eyebrow="What's shipped"
+            title="Features that are on main today."
+            description="No roadmap mixed in. Every card below is a capability running at voyagent.globusdemos.com right now — see the integrations page for vendor-by-vendor driver status, and the changelog for session-by-session history."
           />
         </div>
       </section>
 
       <div className="mx-auto flex w-full max-w-shell flex-col gap-20 px-5 py-20 md:px-8 md:py-28">
         <section>
-          <SectionHeader
-            eyebrow="Agent experience"
-            title="Chat that actually does work."
-          />
-          <div className="mt-10">
-            <FeatureGrid items={AGENT_UX} columns={3} />
-          </div>
-        </section>
-
-        <section>
-          <SectionHeader
-            eyebrow="Domain coverage"
-            title="Three domains. 100+ activities automated."
-            description="Every workflow traces back to the verbatim activity inventory — see the full list in the docs."
-          />
-          <div className="mt-10">
-            <FeatureGrid items={DOMAIN} columns={3} />
-          </div>
-        </section>
-
-        <section>
-          <SectionHeader
-            eyebrow="Vendor-agnostic"
-            title="An integration platform first, an AI product second."
-          />
-          <div className="mt-10">
-            <FeatureGrid items={VENDOR} columns={4} />
-          </div>
-        </section>
-
-        <section>
-          <SectionHeader
-            eyebrow="Finance-grade"
-            title="Books accountants will actually sign off on."
-          />
-          <div className="mt-10">
-            <FeatureGrid items={FINANCE} columns={4} />
-          </div>
-        </section>
-
-        <section>
-          <SectionHeader
-            eyebrow="Security & compliance"
-            title="Multi-tenant by construction."
-          />
-          <div className="mt-10">
-            <FeatureGrid items={SECURITY} columns={4} />
-          </div>
-        </section>
-
-        <section>
-          <SectionHeader
-            eyebrow="Delivery"
-            title="Tri-platform. Streaming. Resilient."
-          />
-          <div className="mt-10">
-            <FeatureGrid items={DELIVERY} columns={3} />
-          </div>
+          <FeatureGrid items={SHIPPED} columns={3} />
         </section>
       </div>
 

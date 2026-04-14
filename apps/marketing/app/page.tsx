@@ -67,12 +67,58 @@ const TIERS = [
 ];
 
 const STATS = [
-  { value: "3", label: "Functional domains covered" },
-  { value: "100+", label: "Activities automated" },
-  { value: "Vendor-agnostic", label: "Adapter-first architecture" },
-  { value: "India-first", label: "Globalization-safe from day one" },
+  { value: "3", label: "Domain agents live" },
+  { value: "SSE", label: "Streaming chat, tool calls in-band" },
+  { value: "Approvals", label: "Web inbox for finance" },
+  { value: "Double-entry", label: "Ledger enforced in code" },
   { value: "Per-tenant", label: "Credentials and data isolated" },
-  { value: "Every action", label: "Audited with approval trail" },
+  { value: "~750 tests", label: "Python + TypeScript suites" },
+];
+
+const SHIPPED_TODAY = [
+  {
+    title: "Real-time agentic chat",
+    body: "SSE streaming from FastAPI with Anthropic prompt caching. Tool calls are rendered inline; responses arrive as they're produced.",
+  },
+  {
+    title: "Approval-gated tool calls",
+    body: "Finance resolves pending actions from a web inbox at /app/approvals. Cross-tenant guard and TTL expiry enforced at the service layer.",
+  },
+  {
+    title: "Enquiry CRUD + lifecycle",
+    body: "Track enquiries through new, quoted, booked and cancelled states. Promote any enquiry into a chat session in one click.",
+  },
+  {
+    title: "Receivables & payables, live",
+    body: "0-30 / 31-60 / 61-90 / 90+ aging buckets computed against real invoices, bills and double-entry journal entries.",
+  },
+  {
+    title: "Three domain agents",
+    body: "ticketing_visa, hotels_holidays and accounting — each with its own scoped tool set. Hotels can't see accounting tools, and vice versa.",
+  },
+  {
+    title: "In-house auth",
+    body: "argon2id passwords, HS256 JWTs (1h access, 30d single-use refresh), httpOnly cookies on web, SecureStore on mobile and desktop.",
+  },
+];
+
+const SHIPPING_NEXT = [
+  {
+    title: "Ticket issuance on Amadeus production",
+    body: "Sandbox is wired; enterprise credentials are the blocker. Until those land, ticketing agents draft PNRs and stop at issuance.",
+  },
+  {
+    title: "TBO hotel booking",
+    body: "Search and price re-check are live. Booking is stubbed behind the approval flow until TBO sandbox credentials are issued.",
+  },
+  {
+    title: "Tally desktop bridge",
+    body: "Tally XML-over-:9000 is partial. A Tauri-side bridge for desktop-local posting is scaffolded and lands next.",
+  },
+  {
+    title: "VFS per-tenant selectors",
+    body: "The Playwright-based browser runner is in place. Per-tenant selector packs and credential vault wiring follow.",
+  },
 ];
 
 const PRINCIPLES = [
@@ -144,6 +190,54 @@ export default function LandingPage() {
                 </div>
               );
             })}
+          </div>
+        </div>
+      </section>
+
+      <section className="mx-auto w-full max-w-shell px-5 py-20 md:px-8 md:py-28">
+        <SectionHeader
+          eyebrow="What you get today"
+          title="Shipped, deployed, and running at voyagent.globusdemos.com."
+          description="These are the capabilities an early-access agency can use this week. Nothing on this list is a promise — it's on main and it's live."
+        />
+        <div className="mx-auto mt-10 grid max-w-5xl gap-6 md:grid-cols-2 lg:grid-cols-3">
+          {SHIPPED_TODAY.map((item) => (
+            <div
+              key={item.title}
+              className="rounded-xl border border-slate-200 bg-white p-6 shadow-soft-md"
+            >
+              <h3 className="text-base font-semibold text-slate-900">
+                {item.title}
+              </h3>
+              <p className="mt-2 text-sm leading-relaxed text-slate-600">
+                {item.body}
+              </p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="bg-slate-50">
+        <div className="mx-auto w-full max-w-shell px-5 py-20 md:px-8 md:py-28">
+          <SectionHeader
+            eyebrow="Shipping next"
+            title="What's wired but not yet unblocked."
+            description="The code paths exist; the blockers are external — vendor credentials, sandbox access, or a desktop-host bridge that's one session away. No invented timelines."
+          />
+          <div className="mx-auto mt-10 grid max-w-5xl gap-6 md:grid-cols-2">
+            {SHIPPING_NEXT.map((item) => (
+              <div
+                key={item.title}
+                className="rounded-xl border border-slate-200 bg-white p-6 shadow-soft-md"
+              >
+                <h3 className="text-base font-semibold text-slate-900">
+                  {item.title}
+                </h3>
+                <p className="mt-2 text-sm leading-relaxed text-slate-600">
+                  {item.body}
+                </p>
+              </div>
+            ))}
           </div>
         </div>
       </section>
@@ -296,7 +390,7 @@ export default function LandingPage() {
           <SectionHeader
             eyebrow="Scope, honestly"
             title="What we will stand behind."
-            description="No fabricated MRR, no invented 'hours saved' numbers. These are the claims we will put on an SOW."
+            description="No fabricated MRR, no invented 'hours saved' numbers, no customer logos we don't have. Just the properties of the system that are true of main today."
             align="center"
           />
           <div className="mt-10 grid gap-4 md:grid-cols-3 lg:grid-cols-6">

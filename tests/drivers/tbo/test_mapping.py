@@ -333,3 +333,106 @@ def test_parse_rate_tolerates_flat_response_without_prebookresult_wrapper() -> N
 )
 def test_parse_board_basis_handles_known_and_unknown(raw, expected) -> None:
     assert _parse_board_basis(raw) == expected
+
+
+# --------------------------------------------------------------------------- #
+# CountryCode handling — 1-char / 3-char / empty / None must be dropped       #
+# --------------------------------------------------------------------------- #
+
+
+def _offer_hotel(country_code, hotel_id: str = "H-C", price: str = "100.00") -> dict:
+    return {
+        "HotelCode": hotel_id,
+        "HotelName": "Sample",
+        "CountryCode": country_code,
+        "Rooms": [{"TotalFare": price, "Currency": "USD"}],
+    }
+
+
+@pytest.mark.parametrize(
+    "country_code, should_keep",
+    [
+        ("IN", True),
+        ("in", True),      # mixed-case 2-letter -> upper-cased and kept
+        ("ind", False),    # 3 letters -> dropped
+        ("I", False),      # 1 letter -> dropped
+        ("", False),       # empty string -> dropped
+        (None, False),     # None -> dropped
+        ("12", False),     # digits -> dropped
+    ],
+)
+def test_parse_search_offers_country_code_validation(
+    country_code, should_keep, caplog
+) -> None:
+    payload = {
+        "HotelSearchResult": {
+            "HotelResults": [_offer_hotel(country_code)],
+        }
+    }
+    with caplog.at_level("DEBUG", logger="drivers.tbo.driver"):
+        offers = _parse_search_offers(payload)
+    if should_keep:
+        assert len(offers) == 1
+        assert offers[0].address_country == "IN"
+    else:
+        assert offers == []
+
+
+def test_parse_search_offers_mixed_country_codes_keeps_only_good(caplog) -> None:
+    """A mix of good + bad CountryCode entries yields only the good ones."""
+    payload = {
+        "HotelSearchResult": {
+            "HotelResults": [
+                _offer_hotel("IN", hotel_id="H-GOOD-1"),
+                _offer_hotel("ind", hotel_id="H-BAD-3LETTER"),
+                _offer_hotel("I", hotel_id="H-BAD-1LETTER"),
+                _offer_hotel(None, hotel_id="H-BAD-NONE"),
+                _offer_hotel("US", hotel_id="H-GOOD-2"),
+                _offer_hotel("", hotel_id="H-BAD-EMPTY"),
+            ]
+        }
+    }
+    with caplog.at_level("DEBUG", logger="drivers.tbo.driver"):
+        offers = _parse_search_offers(payload)
+    assert [o.property_ref for o in offers] == ["H-GOOD-1", "H-GOOD-2"]
+    # And the debug log carries the offending hotel ids so an operator can triage.
+    debug_text = "\n".join(r.getMessage() for r in caplog.records if r.levelname == "DEBUG")
+    assert "H-BAD-NONE" in debug_text
+    assert "H-BAD-3LETTER" in debug_text
+
+
+# --------------------------------------------------------------------------- #
+# Malformed currency / Money validation — offer is skipped, not crashed       #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "bad_currency",
+    ["inr", "RUPEE", "", "12"],
+)
+def test_parse_search_offers_bad_currency_skips_that_offer_only(
+    bad_currency, caplog
+) -> None:
+    """A malformed currency on one offer must not kill a sibling good offer."""
+    payload = {
+        "HotelSearchResult": {
+            "HotelResults": [
+                {
+                    "HotelCode": "H-GOOD",
+                    "HotelName": "Good",
+                    "CountryCode": "IN",
+                    "Rooms": [{"TotalFare": "1000.00", "Currency": "INR"}],
+                },
+                {
+                    "HotelCode": "H-BAD-CUR",
+                    "HotelName": "Bad Currency",
+                    "CountryCode": "IN",
+                    "Rooms": [{"TotalFare": "500.00", "Currency": bad_currency}],
+                },
+            ]
+        }
+    }
+    with caplog.at_level("DEBUG", logger="drivers.tbo.driver"):
+        offers = _parse_search_offers(payload)
+    # No Money/ValidationError propagates; the good offer is still returned.
+    assert [o.property_ref for o in offers] == ["H-GOOD"]

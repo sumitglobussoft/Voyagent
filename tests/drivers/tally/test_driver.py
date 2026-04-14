@@ -337,3 +337,50 @@ async def test_read_account_balance_future_date_still_raises(
         await tally_driver.read_account_balance(
             "00000000-0000-7000-8000-000000000005", date(2030, 12, 31)
         )
+
+
+# --------------------------------------------------------------------------- #
+# tenant_id contract                                                          #
+# --------------------------------------------------------------------------- #
+
+
+async def test_constructor_requires_explicit_tenant_id(
+    tally_config,
+    ledger_name_resolver,
+) -> None:
+    """Tally is per-tenant; silently minting a tenant_id is a contract violation."""
+    with pytest.raises(PermanentError) as exc:
+        TallyDriver(
+            tally_config,
+            ledger_name_resolver=ledger_name_resolver,
+        )
+    assert "tenant_id" in str(exc.value)
+
+
+async def test_constructor_rejects_explicit_none_tenant_id(
+    tally_config,
+    ledger_name_resolver,
+) -> None:
+    with pytest.raises(PermanentError) as exc:
+        TallyDriver(
+            tally_config,
+            tenant_id=None,
+            ledger_name_resolver=ledger_name_resolver,
+        )
+    assert "tenant_id" in str(exc.value)
+
+
+async def test_constructor_happy_path_with_tenant_id(
+    tally_config,
+    tenant_id: str,
+    ledger_name_resolver,
+) -> None:
+    drv = TallyDriver(
+        tally_config,
+        tenant_id=tenant_id,
+        ledger_name_resolver=ledger_name_resolver,
+    )
+    try:
+        assert drv._tenant_id == tenant_id
+    finally:
+        await drv.aclose()
