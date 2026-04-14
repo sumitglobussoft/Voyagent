@@ -139,7 +139,9 @@ resolve_version() {
 compose() {
     (
         cd "$REPO_DIR"
-        "${COMPOSE_BIN[@]}" \
+        # VOYAGENT_ENV_FILE is consumed by the compose file's per-service
+        # `env_file:` key; --env-file only handles variable interpolation.
+        VOYAGENT_ENV_FILE="$ENV_FILE" "${COMPOSE_BIN[@]}" \
             -f "$COMPOSE_FILE" \
             --env-file "$ENV_FILE" \
             "$@"
