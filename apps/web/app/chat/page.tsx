@@ -15,7 +15,8 @@ const apiUrl =
 
 export default async function ChatPage() {
   const user = await requireUser();
-  const accessToken = cookies().get(ACCESS_COOKIE)?.value ?? "";
+  const jar = await cookies();
+  const accessToken = jar.get(ACCESS_COOKIE)?.value ?? "";
 
   return (
     <main style={{ height: "calc(100dvh - 56px)", display: "flex", flexDirection: "column" }}>

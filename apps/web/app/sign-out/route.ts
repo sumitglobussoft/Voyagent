@@ -16,12 +16,12 @@ import {
 } from "@/lib/auth";
 
 export async function POST(req: NextRequest) {
-  const jar = cookies();
+  const jar = await cookies();
   const at = jar.get(ACCESS_COOKIE)?.value ?? null;
   const rt = jar.get(REFRESH_COOKIE)?.value ?? null;
 
   await signOut(at, rt);
-  clearSessionCookies();
+  await clearSessionCookies();
 
   return NextResponse.redirect(new URL("/", req.url), { status: 303 });
 }

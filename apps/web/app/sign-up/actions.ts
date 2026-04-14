@@ -39,6 +39,10 @@ export async function signUpAction(
     return { error: "Something went wrong. Please try again." };
   }
 
-  setSessionCookies(result.access_token, result.refresh_token, result.expires_in);
+  await setSessionCookies(
+    result.access_token,
+    result.refresh_token,
+    result.expires_in,
+  );
   redirect("/app/chat?welcome=1");
 }

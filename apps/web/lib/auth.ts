@@ -185,12 +185,12 @@ export async function fetchMe(accessToken: string): Promise<PublicUser | null> {
   }
 }
 
-export function setSessionCookies(
+export async function setSessionCookies(
   access: string,
   refreshToken: string,
   expiresIn: number,
-): void {
-  const jar = cookies();
+): Promise<void> {
+  const jar = await cookies();
   const secure = isProd();
   jar.set(ACCESS_COOKIE, access, {
     httpOnly: true,
@@ -208,8 +208,8 @@ export function setSessionCookies(
   });
 }
 
-export function clearSessionCookies(): void {
-  const jar = cookies();
+export async function clearSessionCookies(): Promise<void> {
+  const jar = await cookies();
   jar.set(ACCESS_COOKIE, "", { path: "/", maxAge: 0 });
   jar.set(REFRESH_COOKIE, "", { path: "/", maxAge: 0 });
 }
@@ -225,7 +225,7 @@ export function clearSessionCookies(): void {
  * session is unrecoverable.
  */
 export async function getCurrentUser(): Promise<PublicUser | null> {
-  const jar = cookies();
+  const jar = await cookies();
   const at = jar.get(ACCESS_COOKIE)?.value ?? null;
   const rt = jar.get(REFRESH_COOKIE)?.value ?? null;
 
@@ -237,21 +237,25 @@ export async function getCurrentUser(): Promise<PublicUser | null> {
   }
 
   if (!rt) {
-    if (at) clearSessionCookies();
+    if (at) await clearSessionCookies();
     return null;
   }
 
   const refreshed = await refresh(rt);
   if (!refreshed) {
-    clearSessionCookies();
+    await clearSessionCookies();
     return null;
   }
 
-  setSessionCookies(refreshed.access_token, refreshed.refresh_token, refreshed.expires_in);
+  await setSessionCookies(
+    refreshed.access_token,
+    refreshed.refresh_token,
+    refreshed.expires_in,
+  );
   if (refreshed.user) return refreshed.user;
   const user = await fetchMe(refreshed.access_token);
   if (!user) {
-    clearSessionCookies();
+    await clearSessionCookies();
     return null;
   }
   return user;
