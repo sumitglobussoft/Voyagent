@@ -138,6 +138,50 @@ Revisit when a clear customer pull exists.
 
 ---
 
+## D8 — India-first go-to-market, global-ready architecture
+
+**Date:** 2026-04-14
+**Status:** Accepted
+
+**Context.** The target first market is India — dominated by Tally, TBO/Riya consolidators, BSP India, GST, TDS, UPI, and DPDP Act compliance. But the long-term ambition is global: UK, UAE, Southeast Asia, and beyond.
+
+**Decision.**
+- **Go-to-market is India-first.** Early drivers, compliance work, payment rails, and support hours optimize for Indian travel agencies.
+- **The architecture is globalization-safe from day one.** No core abstraction — canonical model, drivers, tool runtime, platform services — may assume India. Country-specific rules live behind country/region-scoped driver implementations and per-tenant configuration, never in shared types or hard-coded logic.
+
+**Concretely, this means:**
+
+1. **Currency** — every monetary field carries an ISO-4217 currency code. No bare `amount: number` fields. Default tenant currency is configurable; multi-currency bookings/invoices are first-class.
+2. **Tax** — GST is one implementation of a generic `TaxRegime` interface. VAT, SST, HST, EU VAT-OSS, UAE VAT, and others plug in as peers. No `gst_rate` field in the canonical model — use `tax_lines: TaxLine[]` with a regime tag.
+3. **Statutory filings** — GST/TDS/PF/ESI filings live behind a `StatutoryDriver` interface (D2 already anticipated this). HMRC, IRS 1099, Singapore IRAS, etc. are drivers, not special cases.
+4. **Identity documents** — passport is the universal canonical traveler identity. Aadhaar/PAN are stored as typed, optional `NationalId` entries keyed by country; they never appear in required fields of `Passenger` or `Client`.
+5. **Addresses** — generic `Address` with locale-typed subfields (no hard-coded "state" / "PIN"). Validators plug in per country.
+6. **Phone numbers** — E.164 always. No Indian-format assumptions in storage or display.
+7. **Payment rails** — UPI / NEFT / RTGS are implementations of `PaymentDriver`. SEPA, ACH, Wise, Stripe Connect, local wallets slot in later without touching the tool runtime.
+8. **Dates, times, numbers** — UTC storage, locale-driven rendering. Indian lakhs/crores formatting is a presentation-layer concern, not a model concern.
+9. **Language** — English-first UI, but every user-facing string in the product (including agent-authored replies) passes through an i18n layer so Hindi, Arabic, and others can be added without forking prompts or UI.
+10. **Data residency** — tenant configuration includes a data-residency region. The platform services layer (storage, logs, credentials) must support multi-region from the start, even if we deploy only `ap-south-1` on day one.
+11. **Compliance envelope** — DPDP is the v1 compliance baseline, but the audit log, credential vault, consent tracking, and retention policies are designed to also satisfy GDPR and UAE PDPL without rework.
+12. **BSP** — IATA BSP is natively global (different settlement cycles per country). `BSPDriver` is already country-scoped; no change needed.
+
+**What we are *not* doing now (but the architecture permits):**
+- Shipping non-INR currencies in v1 UI.
+- Supporting non-India statutory filings in v1.
+- Multi-region deployment — we deploy in one region for India, but with the plumbing to add more.
+- Localization beyond English — but every string is i18n-ready.
+
+**Consequences.**
+- Slightly more upfront modeling work (tax lines, national IDs, currency on every money field). Worth it — retrofitting these is brutal.
+- Every driver and every migration must be reviewed for hidden India assumptions before merge.
+- Documentation and examples deliberately show at least one non-India scenario so the abstractions don't silently decay into India-only.
+
+**Follow-ups.**
+- Canonical model v0 must include `Money`, `TaxLine`, `TaxRegime`, `NationalId`, and country-scoped `Address` from the first draft.
+- Linter/CI rule: reject PRs that introduce `inr`, `gst`, `aadhaar`, `pan`, or `pincode` in shared code outside clearly country-scoped modules.
+- Design doc for the i18n layer before any user-facing string ships.
+
+---
+
 ## Template for future entries
 
 ```

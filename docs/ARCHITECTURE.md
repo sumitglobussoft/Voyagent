@@ -202,6 +202,24 @@ LLMs are used for *narration* of reconciliation findings, not for the matching i
 - **Credentials:** per-tenant KMS-encrypted, never logged.
 - **PII:** passport scans, financial documents — encrypted at rest, retention policy per tenant.
 
+## Globalization-safe design
+
+**Go-to-market is India-first. The architecture is not.** See [D8](./DECISIONS.md#d8--india-first-go-to-market-global-ready-architecture) for the full decision. Core rules:
+
+- **Money** — every monetary value is `{ amount, currency }` with ISO-4217. No bare numbers.
+- **Tax** — `tax_lines: TaxLine[]` with a regime tag; GST is one implementation of `TaxRegime`, not the only one.
+- **Statutory** — `StatutoryDriver` is country-scoped. India-GST, India-TDS, PF/ESI are drivers. HMRC, IRS, IRAS, UAE FTA are peer drivers when we get to them.
+- **Identity** — `Passenger.passport` is the universal identity; `national_ids: NationalId[]` holds country-specific IDs (Aadhaar, PAN, SSN, Emirates ID) as typed optionals.
+- **Address** — generic `Address` with country-keyed validators. No `state`/`pincode` hard-coded in the model.
+- **Phone** — E.164 everywhere.
+- **Payment rails** — UPI / NEFT / RTGS are `PaymentDriver` implementations. SEPA, ACH, Wise, Stripe slot in as peers without changing the tool runtime.
+- **Time & numbers** — UTC storage, locale-driven rendering. Lakhs/crores is a presentation concern.
+- **Language** — every user-facing string (UI + agent-authored) passes through the i18n layer. English-only in v1, but no string is born untranslatable.
+- **Data residency** — tenant config includes a residency region. Platform services are multi-region-capable even though we deploy a single region (India) on day one.
+- **Compliance envelope** — DPDP is the v1 baseline. Audit log, credential vault, consent tracking, and retention policies are designed to also satisfy GDPR and UAE PDPL without rework.
+
+**CI rule:** reject introductions of `inr`, `gst`, `aadhaar`, `pan`, or `pincode` in shared code paths outside clearly country-scoped modules. India-specific logic belongs in India drivers, not in the canonical model.
+
 ## Anti-patterns to avoid
 
 - **One agent per activity.** Leads to brittle handoffs, duplicated plumbing, and huge prompt cost. Use domain agents plus tools.

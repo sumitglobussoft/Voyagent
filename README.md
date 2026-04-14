@@ -55,6 +55,7 @@ These are non-negotiable and shape every architectural decision:
 - **Tri-platform delivery.** Web (light users), Desktop (power users, where GDS terminals and Tally live), Mobile (reporting + remote-control of a paired desktop session).
 - **Anyone can use it.** No assumptions about team size or employee count. Single-user up to many-users-per-tenant.
 - **Auditable.** Every side-effect action is logged with actor, inputs, outputs, and approval trail.
+- **India-first, globalization-safe.** The first market is India (BSP India, GST, TDS, UPI, Tally dominance, DPDP Act). The architecture makes no India-only assumptions: currency, tax, statutory filings, addresses, phone, identity documents, payment rails, language, and data residency are all abstracted for later expansion. See [D8](./docs/DECISIONS.md#d8--india-first-go-to-market-global-ready-architecture).
 
 ## 5. Architecture (6 layers)
 
@@ -153,12 +154,14 @@ This proves the adapter pattern. After this, adding Sabre or Zoho Books becomes 
 
 ## 9. Open questions (to resolve before build start)
 
-1. **Market focus — India-first or global from day one?** Changes priority ordering heavily (BSP India, GST, TDS, Tally dominance, DPDP vs. global tax frameworks and PCI-DSS).
-2. **Tech stack & repo layout.** Language(s), framework choices, monorepo vs. polyrepo, desktop framework (Electron vs. Tauri), mobile (React Native vs. native).
-3. **Canonical domain model v0.** Draft schemas in TypeScript/JSON Schema so drivers have a contract to build against.
-4. **Agent runtime choice.** Claude Agent SDK vs. custom orchestration on top of the Anthropic API. Prompt caching strategy matters because every driver call goes through the agent loop.
-5. **Credential vault & multi-tenant isolation model.** Per-tenant KMS? BYO-key option for enterprise customers?
-6. **Pricing & packaging signal.** Not urgent to decide, but influences whether Voyagent should be single-binary (self-hosted-friendly) or cloud-only.
+1. **Tech stack & repo layout.** Language(s), framework choices, monorepo vs. polyrepo, desktop framework (Electron vs. Tauri), mobile (React Native vs. native).
+2. **Canonical domain model v0.** Draft schemas in TypeScript/JSON Schema so drivers have a contract to build against. Must include `Money`, `TaxLine`, `TaxRegime`, `NationalId`, and country-scoped `Address` from the first draft (see [D8](./docs/DECISIONS.md#d8--india-first-go-to-market-global-ready-architecture)).
+3. **Agent runtime choice.** Claude Agent SDK vs. custom orchestration on top of the Anthropic API. Prompt caching strategy matters because every driver call goes through the agent loop.
+4. **Credential vault & multi-tenant isolation model.** Per-tenant KMS? BYO-key option for enterprise customers?
+5. **Pricing & packaging signal.** Not urgent to decide, but influences whether Voyagent should be single-binary (self-hosted-friendly) or cloud-only.
+
+**Resolved:**
+- ~~Market focus — India-first or global from day one?~~ **India-first go-to-market, globalization-safe architecture from day one.** See [D8](./docs/DECISIONS.md#d8--india-first-go-to-market-global-ready-architecture).
 
 ## 10. Repository layout (planned)
 
