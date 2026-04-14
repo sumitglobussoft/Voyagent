@@ -83,6 +83,12 @@ RUN pnpm --filter @voyagent/core \
 ##########
 # runner #
 ##########
+#
+# Next.js `output: "standalone"` flattens pnpm symlinks incorrectly for a
+# monorepo root — the bundled server.js looks for `next` via a symlink
+# chain that escapes /app. We side-step standalone entirely and ship the
+# full workspace tree, running `next start` like apps/web does.
+#
 FROM node:20.17-bookworm-slim AS runner
 
 ARG VOYAGENT_VERSION
@@ -100,21 +106,20 @@ RUN groupadd --system --gid 1001 voyagent \
 
 WORKDIR /app
 
-# Next.js standalone output bundles a minimal node_modules tree. For this
-# monorepo the flattened entry is /app/server.js (not nested under
-# apps/marketing/). Static assets and public/ are copied to both the
-# flat AND the nested paths so whichever Next looks for is populated.
-COPY --from=build --chown=voyagent:voyagent /app/apps/marketing/.next/standalone ./
-COPY --from=build --chown=voyagent:voyagent /app/apps/marketing/.next/static      ./.next/static
-COPY --from=build --chown=voyagent:voyagent /app/apps/marketing/.next/static      ./apps/marketing/.next/static
-COPY --from=build --chown=voyagent:voyagent /app/apps/marketing/public            ./public
-COPY --from=build --chown=voyagent:voyagent /app/apps/marketing/public            ./apps/marketing/public
+# Copy the workspace tree so pnpm symlinks resolve correctly at runtime.
+COPY --from=build --chown=voyagent:voyagent /app/package.json         ./package.json
+COPY --from=build --chown=voyagent:voyagent /app/pnpm-workspace.yaml  ./pnpm-workspace.yaml
+COPY --from=build --chown=voyagent:voyagent /app/node_modules         ./node_modules
+COPY --from=build --chown=voyagent:voyagent /app/packages             ./packages
+COPY --from=build --chown=voyagent:voyagent /app/apps/marketing       ./apps/marketing
 
 USER voyagent
 
+WORKDIR /app/apps/marketing
+
 EXPOSE 3000
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
   CMD node -e "require('http').get('http://127.0.0.1:3000/', r => process.exit(r.statusCode>=500?1:0)).on('error', () => process.exit(1))"
 
-CMD ["node", "server.js"]
+CMD ["node_modules/.bin/next", "start", "-H", "0.0.0.0", "-p", "3000"]
