@@ -141,6 +141,8 @@ compose() {
         cd "$REPO_DIR"
         # VOYAGENT_ENV_FILE is consumed by the compose file's per-service
         # `env_file:` key; --env-file only handles variable interpolation.
+        # BuildKit is required for `--mount=type=cache` inside Dockerfiles.
+        DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 \
         VOYAGENT_ENV_FILE="$ENV_FILE" "${COMPOSE_BIN[@]}" \
             -f "$COMPOSE_FILE" \
             --env-file "$ENV_FILE" \

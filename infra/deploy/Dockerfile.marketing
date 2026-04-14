@@ -45,8 +45,8 @@ COPY packages/icons/package.json packages/icons/package.json
 COPY packages/chat/package.json packages/chat/package.json
 
 # No lockfile exists yet (v0) — install unfrozen.
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
-    pnpm install --frozen-lockfile=false
+# Cache mount omitted for classic (non-BuildKit) docker build compatibility.
+RUN pnpm install --frozen-lockfile=false
 
 #########
 # build #

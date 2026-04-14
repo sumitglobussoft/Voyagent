@@ -64,8 +64,7 @@ COPY services ./services
 COPY tests    ./tests
 COPY infra    ./infra
 
-RUN --mount=type=cache,id=uv,target=/root/.cache/uv \
-    uv sync --no-dev --frozen=false \
+RUN uv sync --no-dev --frozen=false \
         --package voyagent-api \
         --package voyagent-schemas-canonical \
         --package voyagent-schemas-storage \

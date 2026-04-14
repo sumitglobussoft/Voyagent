@@ -36,8 +36,7 @@ COPY packages/ui/package.json packages/ui/package.json
 COPY packages/icons/package.json packages/icons/package.json
 COPY packages/chat/package.json packages/chat/package.json
 
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
-    pnpm install --frozen-lockfile=false
+RUN pnpm install --frozen-lockfile=false
 
 #########
 # build #

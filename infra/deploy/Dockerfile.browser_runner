@@ -47,8 +47,7 @@ COPY drivers ./drivers
 COPY services ./services
 COPY tests    ./tests
 
-RUN --mount=type=cache,id=uv,target=/root/.cache/uv \
-    uv sync --no-dev --frozen=false \
+RUN uv sync --no-dev --frozen=false \
         --package voyagent-browser-runner \
         --package voyagent-schemas-canonical \
         --package voyagent-driver-contracts
