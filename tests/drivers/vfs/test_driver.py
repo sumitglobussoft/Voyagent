@@ -225,6 +225,30 @@ async def test_book_appointment_returns_datetime(config: VFSConfig) -> None:
 
 
 @pytest.mark.asyncio
+async def test_upload_document_success(config: VFSConfig) -> None:
+    queue = InMemoryJobQueue()
+
+    async def stub(ctx: HandlerContext) -> dict[str, Any]:
+        # Confirm the driver forwarded both ids; the handler sees them.
+        assert ctx.job.inputs["visa_file_id"]
+        assert ctx.job.inputs["document_id"]
+        return {"uploaded": True}
+
+    task = await _drive(queue, {JobKind.VFS_UPLOAD_DOCUMENT: stub})
+    try:
+        client = BrowserRunnerClient(queue)
+        driver = VFSDriver(client, config)
+        # Returns None on success; a handler failure would raise.
+        await driver.upload_document(_uuid7(), _uuid7())
+    finally:
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+
+
+@pytest.mark.asyncio
 async def test_read_status_maps_to_visa_status(config: VFSConfig) -> None:
     queue = InMemoryJobQueue()
 

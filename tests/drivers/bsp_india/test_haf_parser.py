@@ -136,3 +136,195 @@ def test_unrecognised_record_is_skipped_not_fatal() -> None:
     content = "\n".join([header, unknown, trailer]).encode("utf-8") + b"\n"
     haf = parse_haf(content, source_ref="x")
     assert haf.transactions == []
+
+
+# --------------------------------------------------------------------------- #
+# Per-record-type round-trip coverage                                         #
+# --------------------------------------------------------------------------- #
+
+
+def _wrap_with_header_trailer(records: list[str], *, net_control_cents: int = 0) -> bytes:
+    header = _bfh01("IN", "INR", "12345678", "20260401", "20260415", "0000000001")
+    trailer = _bft99(len(records) + 2, net_control_cents)
+    return ("\n".join([header, *records, trailer]) + "\n").encode("utf-8")
+
+
+def test_bks24_single_record_roundtrip_fields() -> None:
+    from .conftest import _bks24
+
+    line = _bks24(
+        ticket="1769999999999",
+        airline="EK",
+        issue="20260501",
+        gross_cents=1_000_000,
+        commission_cents=50_000,
+        taxes_cents=25_000,
+        net_cents=925_000,
+        narration="BOM-DXB economy leisure",
+    )
+    haf = parse_haf(_wrap_with_header_trailer([line], net_control_cents=925_000), source_ref="t")
+
+    assert len(haf.transactions) == 1
+    r = haf.transactions[0]
+    assert isinstance(r, BKS24TicketingRecord)
+    assert r.ticket_number == "1769999999999"
+    assert r.airline_code == "EK"
+    assert r.issue_date.isoformat() == "2026-05-01"
+    assert r.gross_fare == Decimal("10000.00")
+    assert r.commission == Decimal("500.00")
+    assert r.taxes == Decimal("250.00")
+    assert r.net_amount == Decimal("9250.00")
+    assert r.narration == "BOM-DXB economy leisure"
+
+
+def test_bks39_refund_record_carries_original_ticket_and_signed_net() -> None:
+    from .conftest import _bks39
+
+    line = _bks39(
+        doc="REF0000000001",
+        original="1769999999999",
+        airline="EK",
+        issue="20260505",
+        net_cents=-200_000,
+        narration="Voluntary refund",
+    )
+    haf = parse_haf(
+        _wrap_with_header_trailer([line], net_control_cents=-200_000),
+        source_ref="t",
+    )
+    r = haf.transactions[0]
+    assert isinstance(r, BKS39RefundRecord)
+    assert r.document_number == "REF0000000001"
+    assert r.original_ticket_number == "1769999999999"
+    assert r.net_amount == Decimal("-2000.00")
+    assert r.narration == "Voluntary refund"
+
+
+def test_bks45_exchange_record_fields() -> None:
+    from .conftest import _bks45
+
+    line = _bks45(
+        new_ticket="1768888888888",
+        original="1769999999999",
+        airline="EK",
+        issue="20260510",
+        net_cents=75_000,  # additional collect
+        narration="REISSUE DUE ROUTING CHANGE",
+    )
+    haf = parse_haf(
+        _wrap_with_header_trailer([line], net_control_cents=75_000),
+        source_ref="t",
+    )
+    r = haf.transactions[0]
+    assert isinstance(r, BKS45ExchangeRecord)
+    assert r.new_ticket_number == "1768888888888"
+    assert r.original_ticket_number == "1769999999999"
+    assert r.net_amount == Decimal("750.00")
+    assert r.narration == "REISSUE DUE ROUTING CHANGE"
+
+
+def test_bks46_adm_memo_parses_as_debit_memo() -> None:
+    from .conftest import _memo
+
+    line = _memo(
+        "BKS46",
+        memo_number="ADM999",
+        airline="AI",
+        issue="20260408",
+        amount_cents=100_000,
+        narration="Booking class violation",
+    )
+    haf = parse_haf(
+        _wrap_with_header_trailer([line], net_control_cents=100_000),
+        source_ref="t",
+    )
+    r = haf.transactions[0]
+    assert isinstance(r, BKS46ADMRecord)
+    assert r.memo_number == "ADM999"
+    assert r.amount == Decimal("1000.00")
+
+
+def test_bks47_acm_memo_parses_as_credit_memo() -> None:
+    from .conftest import _memo
+
+    line = _memo(
+        "BKS47",
+        memo_number="ACM001",
+        airline="AI",
+        issue="20260410",
+        amount_cents=-10_000,
+        narration="Goodwill adjustment",
+    )
+    haf = parse_haf(
+        _wrap_with_header_trailer([line], net_control_cents=-10_000),
+        source_ref="t",
+    )
+    r = haf.transactions[0]
+    assert isinstance(r, BKS47ACMRecord)
+    assert r.amount == Decimal("-100.00")
+
+
+def test_crlf_line_endings_tolerated() -> None:
+    """HAF files land via SFTP from MS-Windows-style hosts; CRLF must parse."""
+    from .conftest import _bks24
+
+    bks = _bks24(
+        ticket="1766666666666",
+        airline="AI",
+        issue="20260411",
+        gross_cents=100_000,
+        commission_cents=0,
+        taxes_cents=0,
+        net_cents=100_000,
+    )
+    header = _bfh01("IN", "INR", "12345678", "20260401", "20260415", "0000000001")
+    trailer = _bft99(3, 100_000)
+    content = "\r\n".join([header, bks, trailer]).encode("utf-8") + b"\r\n"
+    haf = parse_haf(content, source_ref="crlf")
+    assert len(haf.transactions) == 1
+    assert haf.trailer.record_count == 3
+
+
+def test_trailing_space_padded_lines_preserve_length() -> None:
+    """Regression: trailing-space stripping used to corrupt the fixed-width layout.
+
+    Builds an otherwise-minimal file where every record is padded to
+    ``LINE_LENGTH`` with spaces, and confirms the parser accepts it.
+    """
+    from .conftest import _bks24
+
+    bks = _bks24(
+        ticket="1765555555555",
+        airline="6E",
+        issue="20260412",
+        gross_cents=50_000,
+        commission_cents=0,
+        taxes_cents=0,
+        net_cents=50_000,
+    )
+    # Each record builder already pads to LINE_LENGTH; the parser must
+    # not strip those spaces.
+    assert len(bks) == LINE_LENGTH
+    content = _wrap_with_header_trailer([bks], net_control_cents=50_000)
+    haf = parse_haf(content, source_ref="padded")
+    assert len(haf.transactions) == 1
+
+
+def test_duplicate_header_raises() -> None:
+    header = _bfh01("IN", "INR", "12345678", "20260401", "20260415", "0000000001")
+    dup = _bfh01("IN", "INR", "12345678", "20260401", "20260415", "0000000002")
+    trailer = _bft99(3, 0)
+    content = "\n".join([header, dup, trailer]).encode("utf-8") + b"\n"
+    with pytest.raises(ValidationFailedError) as exc:
+        parse_haf(content, source_ref="dup")
+    assert "duplicate bfh01" in str(exc.value).lower()
+
+
+def test_duplicate_trailer_raises() -> None:
+    header = _bfh01("IN", "INR", "12345678", "20260401", "20260415", "0000000001")
+    t1 = _bft99(3, 0)
+    t2 = _bft99(4, 0)
+    content = "\n".join([header, t1, t2]).encode("utf-8") + b"\n"
+    with pytest.raises(ValidationFailedError) as exc:
+        parse_haf(content, source_ref="dup")
+    assert "duplicate bft99" in str(exc.value).lower()

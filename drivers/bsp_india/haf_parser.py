@@ -484,9 +484,10 @@ def parse_haf(content: bytes, *, source_ref: str) -> HAFFile:
     transactions: list[HAFTransactionRecord] = []
 
     for idx, raw in enumerate(raw_lines, start=1):
-        # Preserve leading and internal whitespace; strip only trailing
-        # whitespace so "line\t\n" style trailers don't false-positive.
-        line = raw.rstrip(" \t")
+        # Preserve trailing spaces (HAF records are space-padded to
+        # ``LINE_LENGTH`` by design). Only strip residual CR from
+        # mixed-terminator files; LF was already consumed above.
+        line = raw.rstrip("\r")
         if not line:
             continue  # blank separator lines are tolerated
 

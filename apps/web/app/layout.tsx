@@ -7,6 +7,7 @@
  * No client-side auth provider — all session reads happen in server
  * components via `lib/auth.ts`.
  */
+import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { getCurrentUser } from "@/lib/auth";
@@ -48,6 +49,29 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
           >
             Voyagent
           </a>
+          {user ? (
+            <nav
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 16,
+                fontSize: 14,
+              }}
+            >
+              <Link
+                href="/enquiries"
+                style={{ color: "#111", textDecoration: "none" }}
+              >
+                Enquiries
+              </Link>
+              <Link
+                href="/approvals"
+                style={{ color: "#111", textDecoration: "none" }}
+              >
+                Approvals
+              </Link>
+            </nav>
+          ) : null}
           <div style={{ display: "flex", alignItems: "center", gap: 16, fontSize: 14 }}>
             {user ? (
               <>

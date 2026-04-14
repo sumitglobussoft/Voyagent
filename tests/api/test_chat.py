@@ -328,6 +328,101 @@ async def test_runtime_unavailable_returns_503(seeded_principal) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Gap-fill: SSE ordering, cross-tenant messages, missing body, approvals.      #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_sse_event_ordering_is_stable(seeded_principal) -> None:
+    """The SSE stream must emit events in run_turn order and end on FINAL."""
+    client = TestClient(app)
+    headers = _bearer(seeded_principal["token"])
+
+    r = client.post("/chat/sessions", json={}, headers=headers)
+    session_id = r.json()["session_id"]
+
+    with client.stream(
+        "POST",
+        f"/chat/sessions/{session_id}/messages",
+        json={"message": "hi"},
+        headers=headers,
+    ) as resp:
+        events = _parse_sse_stream(resp.iter_text())
+
+    agent = [e for e in events if e["event"] == "agent_event"]
+    kinds = [e["data"]["kind"] for e in agent]
+    # text_delta must come strictly before final.
+    assert "text_delta" in kinds
+    assert "final" in kinds
+    assert kinds.index("text_delta") < kinds.index("final")
+    # final must be last (stream stops on first final).
+    assert kinds[-1] == "final"
+
+
+def test_send_message_missing_body_returns_422(seeded_principal) -> None:
+    """POST /messages without a JSON body gets a 422 validation error."""
+    client = TestClient(app)
+    headers = _bearer(seeded_principal["token"])
+    r = client.post("/chat/sessions", json={}, headers=headers)
+    session_id = r.json()["session_id"]
+
+    # ``json=None`` sends an empty body — FastAPI returns 422 for a missing
+    # required model.
+    r2 = client.post(
+        f"/chat/sessions/{session_id}/messages",
+        headers=headers,
+        # No json= and no content → FastAPI returns 422.
+    )
+    assert r2.status_code == 422, r2.text
+
+
+@pytest.mark.asyncio
+async def test_cross_tenant_message_post_returns_404(seeded_principal) -> None:
+    """Posting a message to another tenant's session must 404 (no leak)."""
+    client = TestClient(app)
+    headers = _bearer(seeded_principal["token"])
+    r = client.post("/chat/sessions", json={}, headers=headers)
+    session_id = r.json()["session_id"]
+
+    # Mint a token for a fresh tenant.
+    sm = seeded_principal["sm"]
+    async with sm() as db:
+        from schemas.storage import Tenant, User, UserRole
+
+        tenant2 = Tenant(display_name="Other Agency", default_currency="USD")
+        db.add(tenant2)
+        await db.flush()
+        user2 = User(
+            tenant_id=tenant2.id,
+            external_id="ext-3",
+            display_name="Stranger",
+            email="stranger@example.com",
+            role=UserRole.AGENCY_ADMIN,
+        )
+        db.add(user2)
+        await db.commit()
+        await db.refresh(user2)
+        await db.refresh(tenant2)
+
+        from voyagent_api.auth_inhouse.tokens import issue_access_token
+
+        other, _exp, _jti = issue_access_token(
+            user_id=str(user2.id),
+            tenant_id=str(tenant2.id),
+            email="stranger@example.com",
+            role="agency_admin",
+        )
+
+    r2 = client.post(
+        f"/chat/sessions/{session_id}/messages",
+        json={"message": "ping"},
+        headers=_bearer(other),
+    )
+    assert r2.status_code == 404
+    assert r2.json()["detail"] == "session_not_found"
+
+
+# --------------------------------------------------------------------------- #
 # SSE parsing helper                                                          #
 # --------------------------------------------------------------------------- #
 

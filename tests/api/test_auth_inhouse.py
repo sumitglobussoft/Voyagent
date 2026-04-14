@@ -245,3 +245,54 @@ def test_sign_out_revokes_refresh_and_blacklists_jti(client: TestClient) -> None
     # Access JTI is on the denylist — /me should now 401.
     me = client.get("/auth/me", headers={"Authorization": f"Bearer {access}"})
     assert me.status_code == 401
+
+
+# --------------------------------------------------------------------------- #
+# Access-token claim shape (gap-fill)                                         #
+# --------------------------------------------------------------------------- #
+
+
+def test_access_token_contains_expected_claims(client: TestClient) -> None:
+    """Sign-up must mint a JWT with all canonical claims set correctly."""
+    import jwt as _jwt
+
+    signup = client.post("/auth/sign-up", json=_SIGNUP_BODY).json()
+    access = signup["access_token"]
+
+    settings = get_auth_settings()
+    # Decode WITHOUT verifying aud/iss so we can assert them directly.
+    payload = _jwt.decode(
+        access,
+        settings.secret.get_secret_value(),
+        algorithms=["HS256"],
+        options={"verify_aud": False, "verify_iss": False},
+    )
+    # Canonical claims.
+    for key in ("sub", "tid", "role", "email", "iat", "exp", "jti", "iss", "aud"):
+        assert key in payload, f"missing claim {key!r}"
+    assert payload["iss"] == settings.issuer == "voyagent"
+    assert payload["aud"] == settings.audience == "voyagent-api"
+    assert payload["role"] == "agency_admin"
+    assert payload["email"] == "alice@example.com"
+    # exp must be ~1h after iat (the default access_ttl_seconds).
+    assert payload["exp"] - payload["iat"] == settings.access_ttl_seconds
+    assert payload["exp"] - payload["iat"] == 3600
+
+
+def test_sign_up_always_creates_fresh_tenant_with_admin_owner(
+    client: TestClient,
+) -> None:
+    """Sign-up is self-serve tenant creation — every call makes a new tenant
+    whose sole user is the agency_admin. There is NO path for a second user
+    to join an existing tenant through /auth/sign-up, so the "second user
+    auto-promote" concern does not apply.
+    """
+    r1 = client.post("/auth/sign-up", json=_SIGNUP_BODY).json()
+    r2 = client.post(
+        "/auth/sign-up",
+        json={**_SIGNUP_BODY, "email": "bob@example.com"},
+    ).json()
+    assert r1["user"]["tenant_id"] != r2["user"]["tenant_id"]
+    # Both are admins of their own tenant.
+    assert r1["user"]["role"] == "agency_admin"
+    assert r2["user"]["role"] == "agency_admin"

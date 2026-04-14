@@ -256,3 +256,94 @@ async def test_rbac_empty_roles_means_any_authenticated_role(
     ctx.approvals = {first.approval_id: True}
     second = await invoke_tool("_test_rbac_any_role", {}, ctx, audit_sink=sink)
     assert second.kind == "success"
+
+
+# ------------------------------------------------------------------ #
+# Domain scoping                                                     #
+# ------------------------------------------------------------------ #
+
+
+def test_list_tools_domain_scope_excludes_other_domains() -> None:
+    """A ticketing-visa tool must NOT appear in the hotels tool set."""
+    hotels = {t.spec.name for t in list_tools("hotels_holidays")}
+    tv = {t.spec.name for t in list_tools("ticketing_visa")}
+    accounting = {t.spec.name for t in list_tools("accounting")}
+
+    # ticketing_visa tools are invisible to hotel listings.
+    assert "search_flights" in tv
+    assert "search_flights" not in hotels
+    assert "search_flights" not in accounting
+
+    # Hotel tools invisible to ticketing.
+    assert "search_hotels" in hotels
+    assert "search_hotels" not in tv
+
+
+def test_get_unknown_tool_returns_error_outcome() -> None:
+    """Looking up an unknown tool by name returns a KeyError on get_tool,
+    but invoke_tool wraps the miss into a ``kind="error"`` outcome."""
+    import asyncio
+
+    from voyagent_agent_runtime.tools import InMemoryAuditSink
+
+    async def _go() -> None:
+        from schemas.canonical import ActorKind
+
+        ctx = ToolContext(
+            tenant_id="01900000-0000-7000-8000-000000000001",
+            actor_id="01900000-0000-7000-8000-000000000002",
+            actor_kind=ActorKind.HUMAN,
+            session_id="01900000-0000-7000-8000-000000000003",
+            turn_id="t-not-a-tool",
+            approvals={},
+            extensions={},
+        )
+        sink = InMemoryAuditSink()
+        outcome = await invoke_tool(
+            "this_tool_does_not_exist", {}, ctx, audit_sink=sink
+        )
+        assert outcome.kind == "error"
+        assert "this_tool_does_not_exist" in (outcome.error_message or "")
+        # No audit is written for a missing tool (short-circuits before
+        # side-effect gate).
+        assert sink.events == []
+
+    asyncio.run(_go())
+
+
+async def test_raising_read_only_handler_is_wrapped_as_error(
+    tool_context: ToolContext,
+) -> None:
+    """A read-only tool that raises should not crash the runtime: invoke_tool
+    must trap and return ``kind="error"``. Read-only tools don't produce
+    audit events, so the sink stays empty."""
+    sink = InMemoryAuditSink()
+
+    async def _explode(tool_input: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
+        raise RuntimeError("readonly boom")
+
+    register_tool(
+        ToolSpec(
+            name="_test_readonly_explode",
+            description="Read-only tool that raises.",
+            input_schema={
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+            side_effect=False,
+            reversible=True,
+            approval_required=False,
+            domain="cross_cutting",
+        ),
+        _explode,
+    )
+
+    outcome = await invoke_tool(
+        "_test_readonly_explode", {}, tool_context, audit_sink=sink
+    )
+    assert outcome.kind == "error"
+    assert "readonly boom" in (outcome.error_message or "")
+    # No audit for a read-only tool.
+    assert sink.events == []

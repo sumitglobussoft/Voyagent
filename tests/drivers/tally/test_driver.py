@@ -19,10 +19,16 @@ from drivers._contracts.errors import (
 )
 from drivers.tally.driver import TallyDriver
 from schemas.canonical import (
+    Address,
+    Invoice,
+    InvoiceLine,
+    InvoiceStatus,
     JournalEntry,
     JournalLine,
     LocalizedText,
     Money,
+    TaxLine,
+    TaxRegime,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -175,6 +181,128 @@ async def test_post_journal_company_not_open_maps_to_conflict(
     with pytest.raises(ConflictError) as exc:
         await tally_driver.post_journal(_balanced_entry(tenant_id))
     assert "not open" in str(exc.value).lower()
+
+
+# --------------------------------------------------------------------------- #
+# create_invoice                                                              #
+# --------------------------------------------------------------------------- #
+
+
+def _sample_invoice(tenant: str) -> Invoice:
+    client = "00000000-0000-7000-8000-000000000001"  # resolver knows this
+    base = Decimal("10000.00")
+    cgst = TaxLine(
+        regime=TaxRegime.GST_INDIA,
+        code="CGST",
+        rate_bps=900,
+        taxable_amount=Money(amount=base, currency="INR"),
+        tax_amount=Money(amount=Decimal("900.00"), currency="INR"),
+        jurisdiction="IN",
+    )
+    sgst = TaxLine(
+        regime=TaxRegime.GST_INDIA,
+        code="SGST",
+        rate_bps=900,
+        taxable_amount=Money(amount=base, currency="INR"),
+        tax_amount=Money(amount=Decimal("900.00"), currency="INR"),
+        jurisdiction="IN",
+    )
+    grand = base + Decimal("1800.00")
+    now = datetime.now(timezone.utc)
+    return Invoice(
+        id=_uuid7(),
+        tenant_id=tenant,
+        invoice_number="INV-0099",
+        client_id=client,
+        issue_date=date(2026, 4, 14),
+        currency="INR",
+        lines=[
+            InvoiceLine(
+                description="Consulting",
+                quantity=Decimal("1"),
+                unit_price=Money(amount=base, currency="INR"),
+                subtotal=Money(amount=base, currency="INR"),
+                taxes=[cgst, sgst],
+                total=Money(amount=grand, currency="INR"),
+            )
+        ],
+        subtotal=Money(amount=base, currency="INR"),
+        tax_total=Money(amount=Decimal("1800.00"), currency="INR"),
+        grand_total=Money(amount=grand, currency="INR"),
+        status=InvoiceStatus.DRAFT,
+        billing_address=Address(country="IN", line1="1 MG Road", city="Bengaluru"),
+        notes=LocalizedText(default="Consulting April 2026"),
+        created_at=now,
+        updated_at=now,
+    )
+
+
+@respx.mock
+async def test_create_invoice_happy_path_returns_canonical_id(
+    tally_driver: TallyDriver,
+    sample_voucher_create_response: bytes,
+    tenant_id: str,
+) -> None:
+    base = tally_driver._config.gateway_url.rstrip("/")
+    respx.post(f"{base}/").mock(
+        return_value=httpx.Response(200, content=sample_voucher_create_response)
+    )
+    canonical_id = await tally_driver.create_invoice(_sample_invoice(tenant_id))
+    assert len(canonical_id) == 36
+    assert tally_driver.recent_voucher_ids.get(canonical_id) == "12345"
+
+
+@respx.mock
+async def test_create_invoice_sends_sales_voucher_xml(
+    tally_driver: TallyDriver,
+    sample_voucher_create_response: bytes,
+    tenant_id: str,
+) -> None:
+    """The XML body posted to Tally carries a VCHTYPE=Sales voucher."""
+    from lxml import etree
+
+    base = tally_driver._config.gateway_url.rstrip("/")
+    route = respx.post(f"{base}/").mock(
+        return_value=httpx.Response(200, content=sample_voucher_create_response)
+    )
+    await tally_driver.create_invoice(_sample_invoice(tenant_id))
+    assert route.call_count == 1
+    sent = route.calls.last.request.content
+    voucher = etree.fromstring(sent).find(".//VOUCHER")
+    assert voucher is not None
+    assert voucher.get("VCHTYPE") == "Sales"
+    assert voucher.findtext("VOUCHERNUMBER") == "INV-0099"
+
+
+@respx.mock
+async def test_create_invoice_lineerror_maps_to_permanent_error(
+    tally_driver: TallyDriver,
+    sample_error_response: bytes,
+    tenant_id: str,
+) -> None:
+    base = tally_driver._config.gateway_url.rstrip("/")
+    respx.post(f"{base}/").mock(
+        return_value=httpx.Response(200, content=sample_error_response)
+    )
+    with pytest.raises(PermanentError):
+        await tally_driver.create_invoice(_sample_invoice(tenant_id))
+
+
+# --------------------------------------------------------------------------- #
+# post_journal: resolver-missing guard                                        #
+# --------------------------------------------------------------------------- #
+
+
+async def test_post_journal_without_resolver_raises_permanent_error(
+    tally_config, tenant_id: str
+) -> None:
+    drv = TallyDriver(tally_config, tenant_id=tenant_id)  # no resolver
+    try:
+        with pytest.raises(PermanentError) as exc:
+            await drv.post_journal(_balanced_entry(tenant_id))
+        assert "ledger_name_resolver" in str(exc.value)
+    finally:
+        await drv.aclose()
 
 
 # --------------------------------------------------------------------------- #

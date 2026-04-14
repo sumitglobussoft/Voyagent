@@ -270,3 +270,87 @@ async def test_env_credential_resolver_returns_env_values() -> None:
 
     # Unknown provider → None.
     assert await resolver(_uuid7(), "sabre") is None
+
+
+# --------------------------------------------------------------------------- #
+# Additional coverage — tbo, per-tenant isolation, missing creds              #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_env_credential_resolver_tbo_with_creds_returns_dict() -> None:
+    env = {
+        "VOYAGENT_TBO_USERNAME": "u",
+        "VOYAGENT_TBO_PASSWORD": "p",
+    }
+    resolver = EnvCredentialResolver(env=env)
+    creds = await resolver(_uuid7(), "tbo")
+    assert creds is not None
+    assert creds["username"] == "u"
+    assert creds["password"] == "p"
+    assert creds["api_base"].startswith("https://")
+
+
+@pytest.mark.asyncio
+async def test_env_credential_resolver_tbo_without_creds_returns_none() -> None:
+    """Missing TBO creds must map to ``None`` so the registry skips the
+    hotel-driver slot for that tenant."""
+    env: dict[str, str] = {}  # no TBO vars at all
+    resolver = EnvCredentialResolver(env=env)
+    assert await resolver(_uuid7(), "tbo") is None
+
+
+@pytest.mark.asyncio
+async def test_registry_cache_is_per_tenant_and_does_not_leak(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Building tenant A's registry must not populate tenant B's cache,
+    and resolver calls per tenant stay scoped."""
+    _install_fake_builder(monkeypatch)
+
+    seen: list[str] = []
+
+    async def _resolver(tenant_id: str, provider: str) -> dict[str, Any] | None:
+        seen.append(f"{tenant_id}:{provider}")
+        if provider == "amadeus":
+            return {"client_id": f"cid-{tenant_id}", "client_secret": "x"}
+        return None
+
+    registry = TenantRegistry(_resolver)
+    t_a, t_b = _uuid7(), _uuid7()
+
+    reg_a = await registry.get(t_a)
+    # After building A, only A is cached.
+    assert registry.cached_tenants() == [t_a]
+    # The resolver was asked for A's creds only.
+    assert all(entry.startswith(f"{t_a}:") for entry in seen)
+
+    reg_b = await registry.get(t_b)
+    assert reg_b is not reg_a
+    cached = registry.cached_tenants()
+    assert t_a in cached and t_b in cached
+    # Calls split cleanly between the two tenants.
+    by_tenant: dict[str, int] = {}
+    for entry in seen:
+        by_tenant[entry.split(":", 1)[0]] = by_tenant.get(entry.split(":", 1)[0], 0) + 1
+    assert set(by_tenant) == {t_a, t_b}
+
+
+@pytest.mark.asyncio
+async def test_build_for_with_missing_amadeus_driver_wheel_still_returns_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If ``_build_amadeus_driver`` returns ``None`` (driver not installed)
+    the tenant gets a registry with no driver — NOT an exception that
+    breaks the whole bundle."""
+    monkeypatch.setattr(tr, "_build_amadeus_driver", lambda creds: None)
+    monkeypatch.setattr(tr, "_build_tbo_driver", lambda creds: None)
+
+    async def _resolver(tenant_id: str, provider: str) -> dict[str, Any]:
+        return {"client_id": "a", "client_secret": "b"}
+
+    registry = TenantRegistry(_resolver)
+    reg = await registry.get(_uuid7())
+
+    assert isinstance(reg, DriverRegistry)
+    assert reg.drivers() == []

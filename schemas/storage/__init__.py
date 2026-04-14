@@ -30,6 +30,11 @@ from .crypto import (
     SecurityError,
     build_kms_provider,
 )
+from .enquiry import (
+    ENQUIRY_STATUS_SATYPE,
+    EnquiryRow,
+    EnquiryStatusEnum,
+)
 from .invoice import (
     BILL_STATUS_SATYPE,
     INVOICE_STATUS_SATYPE,
@@ -73,6 +78,9 @@ __all__ = [
     "BillStatusEnum",
     "CredentialDecryptionError",
     "CredentialPayload",
+    "ENQUIRY_STATUS_SATYPE",
+    "EnquiryRow",
+    "EnquiryStatusEnum",
     "FernetEnvKMS",
     "INVOICE_STATUS_SATYPE",
     "InvoiceRow",
