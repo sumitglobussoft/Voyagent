@@ -35,7 +35,15 @@ function SubmitButton() {
   );
 }
 
-export function SignInForm({ next }: { next: string }) {
+export function SignInForm({
+  next,
+  defaultEmail = "",
+  defaultPassword = "",
+}: {
+  next: string;
+  defaultEmail?: string;
+  defaultPassword?: string;
+}) {
   const [state, formAction] = useFormState(signInAction, initialState);
 
   return (
@@ -67,6 +75,7 @@ export function SignInForm({ next }: { next: string }) {
           name="email"
           type="email"
           autoComplete="email"
+          defaultValue={defaultEmail}
           required
           style={{
             padding: "10px 12px",
@@ -86,6 +95,7 @@ export function SignInForm({ next }: { next: string }) {
           name="password"
           type="password"
           autoComplete="current-password"
+          defaultValue={defaultPassword}
           required
           style={{
             padding: "10px 12px",
