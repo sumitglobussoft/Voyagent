@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capability set for the Voyagent desktop shell. Enables the main window plus scoped shell + dialog plugins. Filesystem is intentionally not broadly permitted in v0 — individual driver sidecars will request scoped FS access later.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "shell:default",
+    "dialog:default"
+  ]
+}

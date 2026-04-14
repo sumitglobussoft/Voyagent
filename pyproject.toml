@@ -15,6 +15,7 @@ dev-dependencies = [
 [tool.uv.workspace]
 members = [
     "schemas/canonical",
+    "schemas/storage",
     "drivers/*",
     "services/*",
     "tests",
@@ -22,6 +23,7 @@ members = [
 
 [tool.uv.sources]
 voyagent-schemas-canonical = { workspace = true }
+voyagent-schemas-storage = { workspace = true }
 voyagent-driver-contracts = { workspace = true }
 
 [tool.ruff]

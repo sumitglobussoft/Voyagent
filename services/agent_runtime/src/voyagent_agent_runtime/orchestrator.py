@@ -20,6 +20,7 @@ from .domain_agents.base import DomainAgent, DomainAgentRequest
 from .events import AgentEvent, AgentEventKind
 from .prompts import ORCHESTRATOR_SYSTEM_PROMPT
 from .session import Message, Session
+from .tenant_registry import TENANT_REGISTRY_KEY, TenantRegistry
 from .tools import (
     ORCHESTRATOR_TOOL_NAMES,
     AuditSink,
@@ -41,8 +42,16 @@ class Orchestrator:
       ``audit_sink``         Where tool-side-effect audit events go.
       ``available_domains``  Domain keys the orchestrator is allowed to route to.
       ``handoff_resolver``   Maps ``"ticketing_visa"`` → a concrete domain agent.
-      ``driver_registry``    Runtime :class:`DriverRegistry` — attached to the
-                             ToolContext so domain-agent tools can resolve drivers.
+      ``tenant_registry``    :class:`TenantRegistry` that resolves a
+                             per-tenant :class:`DriverRegistry` on demand.
+                             Attached to the :class:`ToolContext` so
+                             domain-agent tools can look up drivers
+                             scoped to ``ctx.tenant_id``.
+      ``driver_registry``    Deprecated process-wide fallback. When
+                             supplied it is attached to the
+                             :class:`ToolContext` under the legacy key
+                             so pre-multi-tenant tool handlers keep
+                             working during the migration.
     """
 
     def __init__(
@@ -52,12 +61,19 @@ class Orchestrator:
         audit_sink: AuditSink,
         available_domains: list[str],
         handoff_resolver: HandoffResolver,
-        driver_registry: Any,
+        tenant_registry: TenantRegistry | None = None,
+        driver_registry: Any | None = None,
     ) -> None:
+        if tenant_registry is None and driver_registry is None:
+            raise ValueError(
+                "Orchestrator requires tenant_registry (preferred) or "
+                "driver_registry (deprecated)."
+            )
         self._client = anthropic_client
         self._audit = audit_sink
         self._domains = list(available_domains)
         self._resolve = handoff_resolver
+        self._tenant_registry = tenant_registry
         self._drivers = driver_registry
 
     async def run_turn(
@@ -72,6 +88,13 @@ class Orchestrator:
         approval ids emitted on the earlier APPROVAL_REQUEST events.
         """
         turn_id = _new_turn_id()
+        extensions: dict[str, Any] = {}
+        if self._tenant_registry is not None:
+            extensions[TENANT_REGISTRY_KEY] = self._tenant_registry
+        if self._drivers is not None:
+            # Retained for tool handlers that still read the legacy key
+            # during the multi-tenant migration.
+            extensions[DRIVER_REGISTRY_KEY] = self._drivers
         ctx = ToolContext(
             tenant_id=session.tenant_id,
             actor_id=session.actor_id,
@@ -79,7 +102,7 @@ class Orchestrator:
             session_id=session.id,
             turn_id=turn_id,
             approvals=dict(approvals or session.approvals_map()),
-            extensions={DRIVER_REGISTRY_KEY: self._drivers},
+            extensions=extensions,
         )
 
         # Append the user message onto the transcript.

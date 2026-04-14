@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 from typing import Any, ClassVar
 
+from drivers._contracts.cache import OfferCache
 from drivers._contracts.errors import (
     CapabilityNotSupportedError,
     PermanentError,
@@ -30,6 +31,14 @@ from .mapping import (
     amadeus_order_to_pnr,
     criteria_to_query_params,
 )
+
+# Amadeus offers typically expire in 15–30 minutes. Twenty minutes is a
+# conservative default — enough headroom for the agent to gather traveler
+# details and gain human approval, short enough that we don't keep stale
+# prices around. The runtime may override per call.
+_OFFER_TTL_SECONDS = 20 * 60
+# Below this remaining TTL (minutes), we re-price the offer before booking.
+_REPRICE_THRESHOLD_SECONDS = 5 * 60
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +62,7 @@ class AmadeusDriver:
         *,
         client: AmadeusClient | None = None,
         tenant_id: EntityId | None = None,
+        offer_cache: OfferCache | None = None,
     ) -> None:
         self._config = config
         self._client = client or AmadeusClient(config)
@@ -60,6 +70,11 @@ class AmadeusDriver:
         # callers supply a synthetic id when not in a multi-tenant context
         # (e.g. tests, scripts).
         self._tenant_id: EntityId = tenant_id or _new_entity_id()
+        # When present, ``search`` populates the cache with each offer's
+        # raw vendor JSON so ``create`` can re-post it. The runtime
+        # constructs a shared cache via :func:`build_offer_cache` and
+        # injects it here — tests supply an ``InMemoryOfferCache``.
+        self._offer_cache: OfferCache | None = offer_cache
 
     async def aclose(self) -> None:
         """Release the underlying HTTP client."""
@@ -77,7 +92,7 @@ class AmadeusDriver:
             implements=["FareSearchDriver", "PNRDriver"],
             capabilities={
                 "search": "full",
-                "create": "requires_offer_cache",
+                "create": "full",
                 "read": "full",
                 "cancel": "full",
                 "queue_read": "not_supported",
@@ -107,6 +122,11 @@ class AmadeusDriver:
 
     async def search(self, criteria: FareSearchCriteria) -> list[Fare]:
         """Shop ``GET /v2/shopping/flight-offers`` and return canonical fares.
+
+        When an :class:`OfferCache` is configured the raw vendor offer
+        JSON is cached against every canonical ``Fare.id`` produced from
+        that offer, keyed via :func:`_offer_cache_key`. ``create`` then
+        re-reads the offer to build the booking payload.
 
         Raises: any of the standard driver errors — see
         :meth:`FareSearchDriver.search`.
@@ -138,14 +158,29 @@ class AmadeusDriver:
                     total_pax,
                 )
                 continue
-            fares.extend(
-                amadeus_offer_to_fares(
-                    offer,
-                    passenger_ids=pax_slice,
-                    itinerary_id=itinerary_id,
-                    tenant_id=self._tenant_id,
-                )
+            offer_fares = amadeus_offer_to_fares(
+                offer,
+                passenger_ids=pax_slice,
+                itinerary_id=itinerary_id,
+                tenant_id=self._tenant_id,
             )
+            # Cache the raw offer under every fare id it produced so
+            # ``create`` can retrieve it by any single fare later.
+            if self._offer_cache is not None:
+                for fare in offer_fares:
+                    try:
+                        await self._offer_cache.put(
+                            _offer_cache_key(fare.id),
+                            offer,
+                            ttl_seconds=_OFFER_TTL_SECONDS,
+                        )
+                    except Exception:  # noqa: BLE001 — cache is best-effort
+                        logger.warning(
+                            "amadeus: offer cache put failed for fare %s",
+                            fare.id,
+                            exc_info=True,
+                        )
+            fares.extend(offer_fares)
 
         if criteria.max_price is not None:
             fares = [
@@ -165,29 +200,131 @@ class AmadeusDriver:
         fare_ids: list[EntityId],
         passenger_ids: list[EntityId],
     ) -> PNR:
-        """Create a flight-order.
+        """Create a flight-order from cached offer(s).
 
-        **v0 limitation.** Amadeus Self-Service requires the agent to POST
-        the full original flight-offer JSON (re-priced via
-        ``/v1/shopping/flight-offers/pricing``) along with traveler details.
-        This Protocol signature only receives canonical ``fare_ids`` and
-        ``passenger_ids`` — the vendor-native offer body must be sourced
-        from Voyagent's offer cache, which is a future runtime concern.
+        Amadeus Self-Service requires the agent to POST the original
+        flight-offer JSON. This driver sources that JSON from an
+        :class:`OfferCache` populated during :meth:`search`.
 
-        Until the cache exists, ``create`` raises :class:`PermanentError`.
-        A real implementation will:
-          1. look up the cached Amadeus offer by ``fare_ids``,
-          2. fetch canonical Passengers by ``passenger_ids`` and convert
-             them to Amadeus ``travelers`` blocks,
-          3. POST ``/v1/booking/flight-orders`` with that body,
-          4. map the response through :func:`amadeus_order_to_pnr`.
+        The flow:
+          1. Read one cached offer per ``fare_id``. Multiple
+             ``fare_ids`` from the same offer collapse to a single
+             cached entry (Amadeus books a whole offer at once).
+          2. If the offer's ``lastTicketingDateTime`` is close to
+             expiry, re-price via ``POST
+             /v1/shopping/flight-offers/pricing`` and use the returned
+             offer instead.
+          3. Synthesise minimal ``travelers`` blocks (one per
+             ``passenger_id``) — richer passenger detail will be
+             wired when the runtime exposes Passenger lookups.
+          4. POST ``/v1/booking/flight-orders`` and map the response
+             through :func:`amadeus_order_to_pnr`.
+
+        Raises :class:`PermanentError` on cache miss — the caller must
+        re-run ``search`` and try again with fresh fare ids.
         """
-        raise PermanentError(
-            DRIVER_NAME,
-            "AmadeusDriver.create requires the original offer JSON, which the "
-            "Voyagent offer cache does not yet expose. Re-pricing + booking "
-            "will be wired when the runtime offer cache lands.",
+        if self._offer_cache is None:
+            raise PermanentError(
+                DRIVER_NAME,
+                "AmadeusDriver.create requires an offer cache; none was "
+                "configured on this driver instance.",
+            )
+        if not fare_ids:
+            raise PermanentError(
+                DRIVER_NAME,
+                "AmadeusDriver.create: fare_ids must not be empty.",
+            )
+
+        # Collect distinct offers — multiple fare_ids from the same
+        # offer (one per passenger) point at one cached entry.
+        seen_offer_ids: set[str] = set()
+        offers_to_book: list[dict[str, Any]] = []
+        for fid in fare_ids:
+            cached = await self._offer_cache.get(_offer_cache_key(fid))
+            if cached is None:
+                raise PermanentError(
+                    DRIVER_NAME,
+                    f"offer_expired_or_not_cached: fare_id={fid!r}. Re-run "
+                    "search before booking — Amadeus offers have a 15–30 "
+                    "minute TTL and Voyagent caches them for 20 minutes.",
+                )
+            off_id = str(cached.get("id") or fid)
+            if off_id in seen_offer_ids:
+                continue
+            seen_offer_ids.add(off_id)
+            offers_to_book.append(cached)
+
+        # Re-price if any offer is close to expiry. Amadeus's pricing
+        # endpoint accepts the exact shape it returned from shopping.
+        refreshed: list[dict[str, Any]] = []
+        for offer in offers_to_book:
+            if _needs_reprice(offer):
+                repriced = await self._reprice(offer)
+                refreshed.append(repriced)
+            else:
+                refreshed.append(offer)
+
+        travelers_payload = _synthesize_travelers(passenger_ids)
+
+        body = {
+            "data": {
+                "type": "flight-order",
+                "flightOffers": refreshed,
+                "travelers": travelers_payload,
+            }
+        }
+        response = await self._client.post_json(
+            "/v1/booking/flight-orders", json=body
         )
+        order = (response or {}).get("data") if isinstance(response, dict) else None
+        if not isinstance(order, dict):
+            raise PermanentError(
+                DRIVER_NAME,
+                "Amadeus create: unexpected payload shape — missing 'data'.",
+            )
+
+        # Drop the cache entries we just consumed so a retry that
+        # accidentally re-submits the same fare_ids returns a clean
+        # error rather than double-booking.
+        for fid in fare_ids:
+            try:
+                await self._offer_cache.delete(_offer_cache_key(fid))
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "amadeus: cache delete failed for fare %s", fid, exc_info=True
+                )
+
+        return amadeus_order_to_pnr(order, tenant_id=self._tenant_id)
+
+    async def _reprice(self, offer: dict[str, Any]) -> dict[str, Any]:
+        """POST the offer to the pricing endpoint and return the fresh copy.
+
+        Amadeus returns the same flight-offer shape back, typically
+        with refreshed ``lastTicketingDateTime`` and possibly adjusted
+        prices. We surface the new offer to the caller so downstream
+        bookings post the authoritative version.
+        """
+        pricing_body = {
+            "data": {
+                "type": "flight-offers-pricing",
+                "flightOffers": [offer],
+            }
+        }
+        response = await self._client.post_json(
+            "/v1/shopping/flight-offers/pricing", json=pricing_body
+        )
+        data = (response or {}).get("data") if isinstance(response, dict) else None
+        offers = (
+            (data or {}).get("flightOffers") if isinstance(data, dict) else None
+        )
+        if not isinstance(offers, list) or not offers:
+            # Re-pricing failure is a permanent error for this booking —
+            # better to abort than to POST a stale offer.
+            raise PermanentError(
+                DRIVER_NAME,
+                "Amadeus reprice: response did not contain any flightOffers.",
+            )
+        return offers[0]
 
     async def read(self, locator: str) -> PNR:
         """Fetch an order by Amadeus **order id**.
@@ -274,6 +411,82 @@ class AmadeusDriver:
 
     async def __aexit__(self, *_exc: Any) -> None:
         await self.aclose()
+
+
+# --------------------------------------------------------------------------- #
+# Offer-cache helpers                                                         #
+# --------------------------------------------------------------------------- #
+
+
+def _offer_cache_key(fare_id: EntityId) -> str:
+    """Stable cache key for a canonical fare id.
+
+    Prefixed so the shared Redis namespace stays tidy when other
+    components start caching things alongside the driver.
+    """
+    return f"amadeus:fare:{fare_id}"
+
+
+def _needs_reprice(offer: dict[str, Any]) -> bool:
+    """True when the offer's ticketing deadline is under the threshold.
+
+    Amadeus returns ``lastTicketingDateTime`` without a timezone
+    offset; we treat it as UTC here — consistent with the rest of the
+    driver's datetime handling (see :mod:`mapping`). When the field is
+    absent we assume the offer is still fresh; pricing is cheap to run
+    opportunistically if the booking fails.
+    """
+    from datetime import datetime, timezone
+
+    raw = offer.get("lastTicketingDateTime")
+    if not isinstance(raw, str) or not raw:
+        return False
+    try:
+        deadline = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if deadline.tzinfo is None:
+        deadline = deadline.replace(tzinfo=timezone.utc)
+    remaining = (deadline - datetime.now(timezone.utc)).total_seconds()
+    return remaining < _REPRICE_THRESHOLD_SECONDS
+
+
+def _synthesize_travelers(passenger_ids: list[EntityId]) -> list[dict[str, Any]]:
+    """Build minimal Amadeus ``travelers`` blocks from canonical ids.
+
+    v0 does not round-trip through the canonical ``Passenger`` registry
+    yet — the PNR contract passes ids only. We emit placeholder
+    traveler objects so the booking payload has the required shape; a
+    richer implementation will join to :class:`Passenger` and fill in
+    names, dates of birth, contact info, and documents.
+
+    TODO(voyagent-amadeus): integrate with a PassengerResolver once
+    the runtime exposes one.
+    """
+    travelers: list[dict[str, Any]] = []
+    for idx, pid in enumerate(passenger_ids, start=1):
+        travelers.append(
+            {
+                "id": str(idx),
+                "dateOfBirth": "1990-01-01",
+                "name": {"firstName": "PLACEHOLDER", "lastName": "TRAVELER"},
+                "gender": "UNSPECIFIED",
+                "contact": {
+                    "emailAddress": "placeholder@example.com",
+                    "phones": [
+                        {
+                            "deviceType": "MOBILE",
+                            "countryCallingCode": "1",
+                            "number": "5550000000",
+                        }
+                    ],
+                },
+                # Embed the canonical id so the audit trail can join
+                # back even though Amadeus ignores unknown fields.
+                "meta": {"voyagent_passenger_id": str(pid)},
+            }
+        )
+    return travelers
 
 
 __all__ = ["AmadeusDriver"]

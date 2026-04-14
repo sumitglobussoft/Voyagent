@@ -43,7 +43,7 @@ async def test_manifest_declares_expected_capabilities(amadeus_driver: AmadeusDr
     assert m.version == AmadeusDriver.version
     assert set(m.implements) == {"FareSearchDriver", "PNRDriver"}
     assert m.capabilities["search"] == "full"
-    assert m.capabilities["create"] == "requires_offer_cache"
+    assert m.capabilities["create"] == "full"
     assert m.capabilities["read"] == "full"
     assert m.capabilities["cancel"] == "full"
     assert m.capabilities["queue_read"] == "not_supported"
@@ -74,13 +74,94 @@ async def test_void_ticket_raises_not_supported(amadeus_driver: AmadeusDriver) -
         await amadeus_driver.void_ticket("00000000-0000-7000-8000-000000000001")
 
 
-async def test_create_raises_permanent_error_in_v0(amadeus_driver: AmadeusDriver) -> None:
+async def test_create_raises_permanent_error_when_cache_empty(
+    amadeus_driver: AmadeusDriver,
+) -> None:
+    """Without a cached offer, ``create`` must fail fast with a clear hint."""
+    from voyagent_agent_runtime.offer_cache import InMemoryOfferCache
+
+    amadeus_driver._offer_cache = InMemoryOfferCache()
     with pytest.raises(PermanentError) as exc:
         await amadeus_driver.create(
             fare_ids=["00000000-0000-7000-8000-000000000001"],
             passenger_ids=["00000000-0000-7000-8000-000000000002"],
         )
-    assert "offer" in str(exc.value).lower()
+    assert "offer_expired_or_not_cached" in str(exc.value)
+
+
+async def test_create_raises_permanent_error_when_no_cache_configured(
+    amadeus_driver: AmadeusDriver,
+) -> None:
+    """A driver without an offer cache cannot book at all."""
+    amadeus_driver._offer_cache = None
+    with pytest.raises(PermanentError) as exc:
+        await amadeus_driver.create(
+            fare_ids=["00000000-0000-7000-8000-000000000001"],
+            passenger_ids=["00000000-0000-7000-8000-000000000002"],
+        )
+    assert "offer cache" in str(exc.value).lower()
+
+
+@respx.mock
+async def test_create_uses_cached_offer_and_posts_expected_body(
+    amadeus_driver: AmadeusDriver,
+    sample_token_response: dict,
+    sample_order_response: dict,
+) -> None:
+    """Injected :class:`InMemoryOfferCache` + pre-seeded offer => POSTed booking."""
+    from voyagent_agent_runtime.offer_cache import InMemoryOfferCache
+
+    cache = InMemoryOfferCache()
+    amadeus_driver._offer_cache = cache
+
+    fare_id = "00000000-0000-7000-8000-0000000000aa"
+    passenger_id = "00000000-0000-7000-8000-0000000000bb"
+    # Build a plausible cached offer. Deadline far in the future so we
+    # skip the reprice path and land straight on /v1/booking/flight-orders.
+    cached_offer = {
+        "type": "flight-offer",
+        "id": "42",
+        "lastTicketingDateTime": "2099-01-01T00:00:00",
+        "price": {"currency": "USD", "total": "345.60", "base": "300.00"},
+        "travelerPricings": [
+            {
+                "travelerId": "1",
+                "price": {"currency": "USD", "total": "345.60", "base": "300.00"},
+            }
+        ],
+    }
+    await cache.put(
+        f"amadeus:fare:{fare_id}", cached_offer, ttl_seconds=600
+    )
+
+    base = amadeus_driver._config.api_base.rstrip("/")
+    respx.post(f"{base}/v1/security/oauth2/token").mock(
+        return_value=httpx.Response(200, json=sample_token_response)
+    )
+    booking_route = respx.post(f"{base}/v1/booking/flight-orders").mock(
+        return_value=httpx.Response(201, json=sample_order_response)
+    )
+
+    pnr = await amadeus_driver.create(
+        fare_ids=[fare_id],
+        passenger_ids=[passenger_id],
+    )
+
+    assert booking_route.called
+    import json as _json
+
+    sent = _json.loads(booking_route.calls.last.request.content)
+    assert sent["data"]["type"] == "flight-order"
+    assert len(sent["data"]["flightOffers"]) == 1
+    assert sent["data"]["flightOffers"][0]["id"] == "42"
+    assert len(sent["data"]["travelers"]) == 1
+    assert (
+        sent["data"]["travelers"][0]["meta"]["voyagent_passenger_id"]
+        == passenger_id
+    )
+    assert pnr.source == "amadeus"
+    # Cache entry should be consumed so a retry surfaces a clear error.
+    assert await cache.get(f"amadeus:fare:{fare_id}") is None
 
 
 # --------------------------------------------------------------------------- #

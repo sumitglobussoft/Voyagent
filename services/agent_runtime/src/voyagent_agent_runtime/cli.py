@@ -23,6 +23,7 @@ from .drivers import DriverRegistry, build_default_registry
 from .events import AgentEvent, AgentEventKind
 from .orchestrator import Orchestrator
 from .session import InMemorySessionStore, Session
+from .tenant_registry import EnvCredentialResolver, TenantRegistry
 from .tools import InMemoryAuditSink
 
 
@@ -66,11 +67,15 @@ async def _chat() -> int:
             return ticketing
         raise KeyError(f"No domain agent registered for {domain!r}.")
 
+    # Solo-dev CLI — wrap the env-resolver so every session sees the same
+    # credentials. A real deployment uses StorageCredentialResolver.
+    tenant_registry = TenantRegistry(EnvCredentialResolver())
     orchestrator = Orchestrator(
         anthropic_client=client,
         audit_sink=audit,
         available_domains=["ticketing_visa"],
         handoff_resolver=_resolver,
+        tenant_registry=tenant_registry,
         driver_registry=registry,
     )
 

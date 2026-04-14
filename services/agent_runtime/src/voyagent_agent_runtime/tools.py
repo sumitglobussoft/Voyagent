@@ -271,8 +271,29 @@ def _approval_id_for(turn_id: str, tool_name: str) -> str:
     return f"ap-{turn_id}-{tool_name}"
 
 
+_ApprovalSummaryFn = Callable[[dict[str, Any]], str]
+_APPROVAL_SUMMARY_FNS: dict[str, _ApprovalSummaryFn] = {}
+
+
+def register_approval_summary(tool_name: str, fn: _ApprovalSummaryFn) -> None:
+    """Register a tool-specific approval-summary renderer.
+
+    Side-effect tools that require approval can supply a richer summary
+    than the default ``_summary_for`` produces. The caller passes a
+    callable that receives the validated ``tool_input`` dict and returns
+    a short plain-English sentence.
+    """
+    _APPROVAL_SUMMARY_FNS[tool_name] = fn
+
+
 def _summary_for(tool_name: str, tool_input: dict[str, Any]) -> str:
     """One short sentence describing what the tool would do. Conservative."""
+    specific = _APPROVAL_SUMMARY_FNS.get(tool_name)
+    if specific is not None:
+        try:
+            return specific(tool_input)
+        except Exception:  # noqa: BLE001 - never let summary crash the gate
+            logger.debug("approval summary for %s raised; falling back", tool_name)
     brief = ", ".join(f"{k}={v!r}" for k, v in list(tool_input.items())[:3])
     return f"Approve tool `{tool_name}` with {brief}?"
 
@@ -522,19 +543,34 @@ ISSUE_TICKET_SCHEMA: dict[str, Any] = {
 
 
 DRIVER_REGISTRY_KEY = "driver_registry"
+TENANT_REGISTRY_KEY = "tenant_registry"
 
 
-def _resolve_registry(ctx: ToolContext) -> Any:
-    """Return the DriverRegistry attached to this context.
+async def _resolve_registry(ctx: ToolContext) -> Any:
+    """Return the :class:`DriverRegistry` that owns this tenant's drivers.
+
+    Resolution order:
+      1. If the context carries a :class:`TenantRegistry` under
+         :data:`TENANT_REGISTRY_KEY`, ask it to materialise (or return a
+         cached) registry for ``ctx.tenant_id``. This is the multi-
+         tenant path.
+      2. Otherwise fall back to a legacy process-wide
+         :class:`DriverRegistry` under :data:`DRIVER_REGISTRY_KEY` — this
+         keeps pre-multi-tenant tests green during the migration.
 
     We keep the import local to avoid a circular dependency between
     tools and drivers modules.
     """
+    tenant_reg = ctx.extensions.get(TENANT_REGISTRY_KEY)
+    if tenant_reg is not None:
+        return await tenant_reg.get(ctx.tenant_id)
+
     reg = ctx.extensions.get(DRIVER_REGISTRY_KEY)
     if reg is None:
         raise RuntimeError(
-            "No driver registry on ToolContext.extensions "
-            f"[{DRIVER_REGISTRY_KEY!r}]. Wire one before invoking tools."
+            "No tenant registry or driver registry on ToolContext.extensions "
+            f"(looked for {TENANT_REGISTRY_KEY!r} / {DRIVER_REGISTRY_KEY!r}). "
+            "Wire one before invoking tools."
         )
     return reg
 
@@ -593,7 +629,7 @@ async def search_flights(tool_input: dict[str, Any], ctx: ToolContext) -> dict[s
     Wraps a :class:`FareSearchDriver` by constructing a
     :class:`FareSearchCriteria` from the LLM-friendly JSON payload.
     """
-    registry = _resolve_registry(ctx)
+    registry = await _resolve_registry(ctx)
     driver = registry.get("FareSearchDriver")
 
     criteria = FareSearchCriteria(
@@ -626,7 +662,7 @@ async def search_flights(tool_input: dict[str, Any], ctx: ToolContext) -> dict[s
 )
 async def read_pnr(tool_input: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
     """Handler for ``read_pnr``."""
-    registry = _resolve_registry(ctx)
+    registry = await _resolve_registry(ctx)
     driver = registry.get("PNRDriver")
     pnr = await driver.read(tool_input["locator"])
     return {
@@ -661,7 +697,7 @@ async def issue_ticket(tool_input: dict[str, Any], ctx: ToolContext) -> dict[str
     explanation rather than propagating the raw exception, so the agent
     can explain the limitation to the user.
     """
-    registry = _resolve_registry(ctx)
+    registry = await _resolve_registry(ctx)
     driver = registry.get("PNRDriver")
     try:
         tickets = await driver.issue_ticket(tool_input["pnr_id"])
@@ -734,15 +770,573 @@ def _register_orchestrator_tools() -> None:
 _register_orchestrator_tools()
 
 
+# --------------------------------------------------------------------------- #
+# --- accounting tools ---                                                    #
+# --------------------------------------------------------------------------- #
+
+
+LIST_LEDGER_ACCOUNTS_SCHEMA: dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {},
+    "additionalProperties": False,
+}
+
+
+POST_JOURNAL_SCHEMA: dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "required": ["entry"],
+    "properties": {
+        "entry": {
+            "type": "object",
+            "required": ["narration", "lines"],
+            "properties": {
+                "narration": {"type": "string", "minLength": 1},
+                "entry_date": {"type": "string", "format": "date"},
+                "source_event": {"type": "string"},
+                "lines": {
+                    "type": "array",
+                    "minItems": 2,
+                    "items": {
+                        "type": "object",
+                        "required": ["account_id", "currency"],
+                        "properties": {
+                            "account_id": {"type": "string", "minLength": 1},
+                            "account_code": {"type": "string"},
+                            "debit_amount": {"type": "string"},
+                            "credit_amount": {"type": "string"},
+                            "currency": {
+                                "type": "string",
+                                "pattern": r"^[A-Z]{3}$",
+                            },
+                            "narration": {"type": "string"},
+                        },
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "additionalProperties": False,
+        }
+    },
+    "additionalProperties": False,
+}
+
+
+CREATE_INVOICE_SCHEMA: dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "required": ["invoice"],
+    "properties": {
+        "invoice": {
+            "type": "object",
+            "required": [
+                "invoice_number",
+                "client_id",
+                "issue_date",
+                "currency",
+                "lines",
+                "billing_address",
+            ],
+            "properties": {
+                "invoice_number": {"type": "string", "minLength": 1},
+                "series": {"type": "string"},
+                "client_id": {"type": "string", "minLength": 1},
+                "issue_date": {"type": "string", "format": "date"},
+                "due_date": {"type": "string", "format": "date"},
+                "currency": {"type": "string", "pattern": r"^[A-Z]{3}$"},
+                "lines": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {"type": "object"},
+                },
+                "billing_address": {"type": "object"},
+                "notes": {"type": "string"},
+            },
+            "additionalProperties": True,
+        }
+    },
+    "additionalProperties": False,
+}
+
+
+FETCH_BSP_STATEMENT_SCHEMA: dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "required": ["country", "period_start", "period_end"],
+    "properties": {
+        "country": {"type": "string", "pattern": r"^[A-Z]{2}$"},
+        "period_start": {"type": "string", "format": "date"},
+        "period_end": {"type": "string", "format": "date"},
+    },
+    "additionalProperties": False,
+}
+
+
+RECONCILE_BSP_SCHEMA: dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "required": ["report_id"],
+    "properties": {
+        "report_id": {"type": "string", "minLength": 1},
+        "ticket_ids": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+    },
+    "additionalProperties": False,
+}
+
+
+READ_ACCOUNT_BALANCE_SCHEMA: dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "required": ["account_id", "as_of"],
+    "properties": {
+        "account_id": {"type": "string", "minLength": 1},
+        "as_of": {"type": "string", "format": "date"},
+    },
+    "additionalProperties": False,
+}
+
+
+# Keys used to stash per-runtime caches on ``ctx.extensions``.
+BSP_REPORTS_CACHE_KEY = "bsp_reports_cache"
+TICKETS_STORE_KEY = "tickets_store"
+
+
+def _fmt_money(amount: Decimal, currency: str) -> str:
+    """Render a Money-shaped pair as ``"CCY 1,234.56"``.
+
+    Generic formatting only — no Indian lakh/crore formatting here.
+    Localisation happens at the presentation layer (docs/DECISIONS.md#d8).
+    """
+    try:
+        return f"{currency} {Decimal(amount):,.2f}"
+    except Exception:  # pragma: no cover - defensive
+        return f"{currency} {amount}"
+
+
+@tool(
+    name="list_ledger_accounts",
+    description=(
+        "List the tenant's chart of accounts. Read-only. Returns compact "
+        "{id, code, name, type} entries. Always call this before posting "
+        "a journal or creating an invoice."
+    ),
+    domain="accounting",
+    input_schema=LIST_LEDGER_ACCOUNTS_SCHEMA,
+    side_effect=False,
+    reversible=True,
+    approval_required=False,
+)
+async def list_ledger_accounts(
+    tool_input: dict[str, Any], ctx: ToolContext
+) -> dict[str, Any]:
+    """Handler for ``list_ledger_accounts``."""
+    del tool_input
+    registry = await _resolve_registry(ctx)
+    driver = registry.get("AccountingDriver")
+    accounts = await driver.list_accounts()
+    summaries: list[dict[str, Any]] = []
+    for a in accounts[:200]:
+        name_default = getattr(getattr(a, "name", None), "default", None) or ""
+        summaries.append(
+            {
+                "id": getattr(a, "id", None),
+                "code": getattr(a, "code", None),
+                "name": name_default,
+                "type": getattr(a, "type", None),
+            }
+        )
+    return {"count": len(accounts), "accounts": summaries}
+
+
+@tool(
+    name="post_journal_entry",
+    description=(
+        "Post a double-entry journal voucher to the books. SIDE EFFECT, "
+        "NOT REVERSIBLE. Always requires human approval. Provide narration "
+        "and at least two lines; each line sets exactly one of "
+        "debit_amount / credit_amount, plus currency."
+    ),
+    domain="accounting",
+    input_schema=POST_JOURNAL_SCHEMA,
+    side_effect=True,
+    reversible=False,
+    approval_required=True,
+    approval_roles=["accountant", "admin"],
+)
+async def post_journal_entry(
+    tool_input: dict[str, Any], ctx: ToolContext
+) -> dict[str, Any]:
+    """Handler for ``post_journal_entry``.
+
+    Builds a canonical :class:`JournalEntry` from the LLM-friendly
+    payload and forwards to the :class:`AccountingDriver`.
+    """
+    from schemas.canonical import JournalEntry, JournalLine, LocalizedText, Money
+
+    registry = await _resolve_registry(ctx)
+    driver = registry.get("AccountingDriver")
+
+    entry_input = tool_input["entry"]
+    lines_in = entry_input.get("lines") or []
+    canonical_lines: list[JournalLine] = []
+    for ln in lines_in:
+        ccy = str(ln["currency"]).upper()
+        debit = ln.get("debit_amount")
+        credit = ln.get("credit_amount")
+        if (debit is None) == (credit is None):
+            return {
+                "posted": False,
+                "reason": "invalid_line",
+                "detail": "Each line must set exactly one of debit_amount / credit_amount.",
+            }
+        canonical_lines.append(
+            JournalLine(
+                account_id=ln["account_id"],
+                debit=Money(amount=Decimal(str(debit)), currency=ccy) if debit is not None else None,
+                credit=Money(amount=Decimal(str(credit)), currency=ccy) if credit is not None else None,
+                narration=ln.get("narration"),
+            )
+        )
+
+    entry_date = (
+        date.fromisoformat(entry_input["entry_date"])
+        if entry_input.get("entry_date")
+        else datetime.now(timezone.utc).date()
+    )
+    now = datetime.now(timezone.utc)
+
+    try:
+        entry = JournalEntry(
+            id=_uuid7_like(),
+            tenant_id=ctx.tenant_id,
+            entry_date=entry_date,
+            narration=LocalizedText(default=str(entry_input["narration"])),
+            lines=canonical_lines,
+            source_event=str(entry_input.get("source_event") or "manual.journal"),
+            created_at=now,
+            updated_at=now,
+        )
+    except Exception as exc:
+        return {"posted": False, "reason": "validation_failed", "detail": str(exc)}
+
+    journal_id = await driver.post_journal(entry)
+    return {"posted": True, "journal_id": journal_id}
+
+
+@tool(
+    name="create_invoice",
+    description=(
+        "Create a customer invoice in the backing accounting system. "
+        "SIDE EFFECT, reversible (supports cancellation / credit note). "
+        "Always requires human approval."
+    ),
+    domain="accounting",
+    input_schema=CREATE_INVOICE_SCHEMA,
+    side_effect=True,
+    reversible=True,
+    approval_required=True,
+    approval_roles=["accountant", "admin"],
+)
+async def create_invoice(
+    tool_input: dict[str, Any], ctx: ToolContext
+) -> dict[str, Any]:
+    """Handler for ``create_invoice``.
+
+    For v0 the canonical :class:`Invoice` is assumed to have been
+    assembled upstream. This tool accepts a dict that already looks
+    like :meth:`Invoice.model_dump` and hands it to the accounting
+    driver.
+    """
+    from schemas.canonical import Invoice
+
+    registry = await _resolve_registry(ctx)
+    driver = registry.get("AccountingDriver")
+
+    raw = dict(tool_input["invoice"])
+    now = datetime.now(timezone.utc)
+    raw.setdefault("id", _uuid7_like())
+    raw.setdefault("tenant_id", ctx.tenant_id)
+    raw.setdefault("created_at", now)
+    raw.setdefault("updated_at", now)
+
+    try:
+        invoice = Invoice.model_validate(raw)
+    except Exception as exc:
+        return {"created": False, "reason": "validation_failed", "detail": str(exc)}
+
+    invoice_id = await driver.create_invoice(invoice)
+    return {
+        "created": True,
+        "invoice_id": invoice_id,
+        "invoice_number": invoice.invoice_number,
+    }
+
+
+@tool(
+    name="fetch_bsp_statement",
+    description=(
+        "Fetch and parse a BSP settlement statement for a country + period. "
+        "Read-only. Returns a compact summary (totals, transaction counts). "
+        "The full canonical report is cached in the runtime under the "
+        "returned report_id for later reconcile_bsp calls."
+    ),
+    domain="accounting",
+    input_schema=FETCH_BSP_STATEMENT_SCHEMA,
+    side_effect=False,
+    reversible=True,
+    approval_required=False,
+)
+async def fetch_bsp_statement(
+    tool_input: dict[str, Any], ctx: ToolContext
+) -> dict[str, Any]:
+    """Handler for ``fetch_bsp_statement``."""
+    from datetime import datetime as _dt
+    from datetime import timedelta as _td
+
+    from schemas.canonical import Period
+
+    registry = await _resolve_registry(ctx)
+    driver = registry.get("BSPDriver")
+
+    start_d = date.fromisoformat(tool_input["period_start"])
+    end_d = date.fromisoformat(tool_input["period_end"])
+    period = Period(
+        start=_dt(start_d.year, start_d.month, start_d.day, tzinfo=timezone.utc),
+        end=_dt(end_d.year, end_d.month, end_d.day, tzinfo=timezone.utc) + _td(days=1),
+    )
+    report = await driver.fetch_statement(tool_input["country"], period)
+
+    cache: dict[str, Any] = ctx.extensions.setdefault(BSP_REPORTS_CACHE_KEY, {})
+    cache[report.id] = report
+
+    return {
+        "report_id": report.id,
+        "country": report.country,
+        "sales_total": _fmt_money(report.sales_total.amount, report.sales_total.currency),
+        "refund_total": _fmt_money(report.refund_total.amount, report.refund_total.currency),
+        "commission_total": _fmt_money(
+            report.commission_total.amount, report.commission_total.currency
+        ),
+        "net_remittance": _fmt_money(
+            report.net_remittance.amount, report.net_remittance.currency
+        ),
+        "transaction_count": len(report.transactions),
+        "source_ref": report.source_ref,
+    }
+
+
+@tool(
+    name="reconcile_bsp",
+    description=(
+        "Run deterministic reconciliation of a previously fetched BSP "
+        "report against Voyagent tickets. Read-only. Returns a compact "
+        "summary plus an issues list for the accountant to review. In v0 "
+        "the optional ticket_ids argument selects from the runtime's in-"
+        "memory tickets store; in production this will pull from the "
+        "sales table."
+    ),
+    domain="accounting",
+    input_schema=RECONCILE_BSP_SCHEMA,
+    side_effect=False,
+    reversible=True,
+    approval_required=False,
+)
+async def reconcile_bsp(
+    tool_input: dict[str, Any], ctx: ToolContext
+) -> dict[str, Any]:
+    """Handler for ``reconcile_bsp``."""
+    # Local import — the tools module should stay importable without the
+    # BSP India driver installed.
+    from drivers.bsp_india.mapping import reconcile_bsp_against_tickets
+
+    cache = ctx.extensions.get(BSP_REPORTS_CACHE_KEY) or {}
+    report = cache.get(tool_input["report_id"])
+    if report is None:
+        return {
+            "reconciled": False,
+            "reason": "report_not_found",
+            "detail": (
+                f"No cached BSP report with id {tool_input['report_id']!r}. "
+                "Call fetch_bsp_statement first."
+            ),
+        }
+
+    tickets_store: dict[str, Any] = ctx.extensions.get(TICKETS_STORE_KEY) or {}
+    ticket_ids = tool_input.get("ticket_ids")
+    if ticket_ids:
+        tickets = [tickets_store[t] for t in ticket_ids if t in tickets_store]
+    else:
+        tickets = list(tickets_store.values())
+
+    reconciliation = reconcile_bsp_against_tickets(report, tickets)
+    summary = reconciliation.summary
+    issues: list[dict[str, Any]] = []
+    for item in reconciliation.items:
+        if item.outcome == "matched":
+            continue
+        delta = None
+        if item.delta is not None:
+            delta = _fmt_money(item.delta.amount, item.delta.currency)
+        issues.append(
+            {
+                "outcome": item.outcome,
+                "external_ref": item.external_ref,
+                "internal_refs": item.internal_refs,
+                "delta": delta,
+                "evidence": (
+                    item.evidence.default if item.evidence is not None else None
+                ),
+            }
+        )
+    return {
+        "reconciled": True,
+        "summary": {
+            "matched": summary.matched_count,
+            "matched_amount": (
+                _fmt_money(
+                    summary.matched_amount.amount, summary.matched_amount.currency
+                )
+                if summary.matched_amount is not None
+                else None
+            ),
+            "unmatched_external": summary.unmatched_external_count,
+            "unmatched_internal": summary.unmatched_internal_count,
+            "discrepancy": summary.discrepancy_count,
+            "tentative": summary.tentative_count,
+        },
+        "issues": issues[:50],
+        "reconciliation_id": reconciliation.id,
+    }
+
+
+@tool(
+    name="read_account_balance",
+    description=(
+        "Read a ledger account balance as of a date. Read-only. Some "
+        "backends (e.g. desktop accounting) do not support this; in that "
+        "case the tool returns a structured not-supported result rather "
+        "than failing the run."
+    ),
+    domain="accounting",
+    input_schema=READ_ACCOUNT_BALANCE_SCHEMA,
+    side_effect=False,
+    reversible=True,
+    approval_required=False,
+)
+async def read_account_balance(
+    tool_input: dict[str, Any], ctx: ToolContext
+) -> dict[str, Any]:
+    """Handler for ``read_account_balance``.
+
+    The underlying :class:`AccountingDriver.read_account_balance` may
+    raise :class:`CapabilityNotSupportedError` (Tally's v0 driver does).
+    We catch it and surface a structured not-supported response so the
+    agent can explain the limitation plainly without the runtime
+    classifying the whole call as a hard failure.
+    """
+    registry = await _resolve_registry(ctx)
+    driver = registry.get("AccountingDriver")
+    as_of = date.fromisoformat(tool_input["as_of"])
+    try:
+        balance = await driver.read_account_balance(tool_input["account_id"], as_of)
+    except CapabilityNotSupportedError as exc:
+        return {
+            "read": False,
+            "reason": "capability_not_supported",
+            "detail": exc.message,
+        }
+    return {
+        "read": True,
+        "balance": _fmt_money(balance.amount, balance.currency),
+        "currency": balance.currency,
+    }
+
+
+def _post_journal_summary(tool_input: dict[str, Any]) -> str:
+    """Approval summary for ``post_journal_entry``.
+
+    Example output:
+        "Post INR 18,500.00 journal to narration 'Daily cash sale' across
+        2 lines. Not reversible."
+    """
+    entry = tool_input.get("entry") or {}
+    narration = entry.get("narration") or "(no narration)"
+    lines = entry.get("lines") or []
+    debit_by_ccy: dict[str, Decimal] = {}
+    for ln in lines:
+        ccy = str(ln.get("currency") or "").upper()
+        if not ccy:
+            continue
+        if ln.get("debit_amount") is not None:
+            try:
+                debit_by_ccy[ccy] = debit_by_ccy.get(ccy, Decimal("0")) + Decimal(
+                    str(ln["debit_amount"])
+                )
+            except Exception:  # noqa: BLE001
+                continue
+    if debit_by_ccy:
+        totals = ", ".join(f"{k} {v:,.2f}" for k, v in debit_by_ccy.items())
+    else:
+        totals = "(amount unknown)"
+    return (
+        f"Post {totals} journal: {narration} across {len(lines)} lines. "
+        "Not reversible."
+    )
+
+
+def _create_invoice_summary(tool_input: dict[str, Any]) -> str:
+    """Approval summary for ``create_invoice``."""
+    inv = tool_input.get("invoice") or {}
+    number = inv.get("invoice_number") or "(no number)"
+    ccy = str(inv.get("currency") or "").upper()
+    total_raw: Any = None
+    for key in ("grand_total", "total", "amount"):
+        if key in inv:
+            candidate = inv[key]
+            if isinstance(candidate, dict) and "amount" in candidate:
+                total_raw = candidate["amount"]
+                break
+            if isinstance(candidate, (int, str)):
+                total_raw = candidate
+                break
+    if total_raw is not None and ccy:
+        try:
+            return f"Create invoice {number} for {ccy} {Decimal(str(total_raw)):,.2f}. Reversible via cancellation."
+        except Exception:  # noqa: BLE001
+            pass
+    return f"Create invoice {number}. Reversible via cancellation."
+
+
+register_approval_summary("post_journal_entry", _post_journal_summary)
+register_approval_summary("create_invoice", _create_invoice_summary)
+
+
 ORCHESTRATOR_TOOL_NAMES: list[str] = ["handoff", "clarify"]
 TICKETING_VISA_TOOL_NAMES: list[str] = ["search_flights", "read_pnr", "issue_ticket"]
+ACCOUNTING_TOOL_NAMES: list[str] = [
+    "list_ledger_accounts",
+    "post_journal_entry",
+    "create_invoice",
+    "fetch_bsp_statement",
+    "reconcile_bsp",
+    "read_account_balance",
+]
 
 
 __all__ = [
+    "ACCOUNTING_TOOL_NAMES",
     "AuditSink",
+    "BSP_REPORTS_CACHE_KEY",
+    "DRIVER_REGISTRY_KEY",
     "InMemoryAuditSink",
     "ORCHESTRATOR_TOOL_NAMES",
+    "TENANT_REGISTRY_KEY",
     "TICKETING_VISA_TOOL_NAMES",
+    "TICKETS_STORE_KEY",
     "Tool",
     "ToolContext",
     "ToolDomain",
@@ -756,5 +1350,4 @@ __all__ = [
     "list_tools",
     "register_tool",
     "tool",
-    "DRIVER_REGISTRY_KEY",
 ]

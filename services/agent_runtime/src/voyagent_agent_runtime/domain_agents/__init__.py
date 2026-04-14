@@ -7,7 +7,13 @@ approval-gating shape as the orchestrator.
 
 from __future__ import annotations
 
+from .accounting import AccountingAgent
 from .base import DomainAgent, DomainAgentRequest
 from .ticketing_visa import TicketingVisaAgent
 
-__all__ = ["DomainAgent", "DomainAgentRequest", "TicketingVisaAgent"]
+__all__ = [
+    "AccountingAgent",
+    "DomainAgent",
+    "DomainAgentRequest",
+    "TicketingVisaAgent",
+]

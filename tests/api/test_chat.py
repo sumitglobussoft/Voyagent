@@ -138,8 +138,17 @@ _install_stub_runtime()
 # Import after the stub is in place so the lru_cache captures it.
 from fastapi.testclient import TestClient  # noqa: E402
 
+from voyagent_api import auth as auth_module  # noqa: E402
 from voyagent_api import chat as chat_module  # noqa: E402
 from voyagent_api.main import app  # noqa: E402
+
+
+# Dev-mode auth headers shared across tests.
+_DEV_HEADERS = {
+    "X-Voyagent-Dev-Tenant": "t1",
+    "X-Voyagent-Dev-Actor": "a1",
+    "X-Voyagent-Dev-Role": "agent",
+}
 
 
 @pytest.fixture(autouse=True)
@@ -147,30 +156,41 @@ def _reset_runtime_caches() -> None:
     chat_module._runtime.cache_clear()
     chat_module._bundle = None
     _install_stub_runtime()
+    # Disable auth signature verification; rely on dev headers.
+    auth_module.set_auth_settings_for_test(
+        auth_module.AuthSettings(
+            enabled=False,
+            jwks_url="",
+            issuer="",
+        )
+    )
+    yield
+    auth_module.set_auth_settings_for_test(None)
 
 
 def test_create_session_and_stream_sse() -> None:
     client = TestClient(app)
 
-    r = client.post(
-        "/chat/sessions",
-        json={"tenant_id": "t1", "actor_id": "a1"},
-    )
+    r = client.post("/chat/sessions", json={}, headers=_DEV_HEADERS)
     assert r.status_code == 201, r.text
     session_id = r.json()["session_id"]
 
-    meta = client.get(f"/chat/sessions/{session_id}")
+    meta = client.get(f"/chat/sessions/{session_id}", headers=_DEV_HEADERS)
     assert meta.status_code == 200
     body = meta.json()
     assert body["session_id"] == session_id
-    assert body["tenant_id"] == "t1"
-    assert body["actor_id"] == "a1"
+    # Canonical ids are derived deterministically from the dev headers.
+    from voyagent_api.tenancy import tenant_id_from_external, user_id_from_external
+
+    assert body["tenant_id"] == tenant_id_from_external("t1")
+    assert body["actor_id"] == user_id_from_external("t1", "a1")
     assert body["pending_approvals"] == []
 
     with client.stream(
         "POST",
         f"/chat/sessions/{session_id}/messages",
         json={"message": "hi", "approvals": None},
+        headers=_DEV_HEADERS,
     ) as resp:
         assert resp.status_code == 200
         ctype = resp.headers["content-type"]
@@ -186,8 +206,31 @@ def test_create_session_and_stream_sse() -> None:
 
 def test_missing_session_returns_404() -> None:
     client = TestClient(app)
-    r = client.get("/chat/sessions/does-not-exist")
+    r = client.get("/chat/sessions/does-not-exist", headers=_DEV_HEADERS)
     assert r.status_code == 404
+
+
+def test_cross_tenant_session_returns_404() -> None:
+    """A session owned by tenant A must be invisible to tenant B (as 404)."""
+    client = TestClient(app)
+    r = client.post("/chat/sessions", json={}, headers=_DEV_HEADERS)
+    assert r.status_code == 201
+    session_id = r.json()["session_id"]
+
+    # Same user, different tenant → must look like the session doesn't exist.
+    other_headers = {
+        **_DEV_HEADERS,
+        "X-Voyagent-Dev-Tenant": "t2",
+    }
+    r2 = client.get(f"/chat/sessions/{session_id}", headers=other_headers)
+    assert r2.status_code == 404
+
+
+def test_missing_auth_returns_401() -> None:
+    """Dev mode without the dev headers → 401, not a silent demo principal."""
+    client = TestClient(app)
+    r = client.post("/chat/sessions", json={})
+    assert r.status_code == 401
 
 
 def test_runtime_unavailable_returns_503() -> None:
@@ -196,10 +239,7 @@ def test_runtime_unavailable_returns_503() -> None:
     chat_module._bundle = None
 
     client = TestClient(app)
-    r = client.post(
-        "/chat/sessions",
-        json={"tenant_id": "t1", "actor_id": "a1"},
-    )
+    r = client.post("/chat/sessions", json={}, headers=_DEV_HEADERS)
     assert r.status_code == 503
     assert r.json()["detail"] == "agent_runtime_unavailable"
 

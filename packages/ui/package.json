@@ -1,0 +1,35 @@
+{
+  "name": "@voyagent/ui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Voyagent primitive React components (Button, Input, Card, etc.). Tailwind-based, ref-forwarding, no runtime CSS-in-JS.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "tsc --noEmit",
+    "clean": "rimraf dist"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@voyagent/config": "workspace:*",
+    "typescript": "^5.6.0",
+    "rimraf": "^6.0.0"
+  }
+}

@@ -12,6 +12,14 @@ from .domain_agents import DomainAgent, DomainAgentRequest, TicketingVisaAgent
 from .drivers import DriverRegistry, build_default_registry
 from .events import AgentEvent, AgentEventKind
 from .orchestrator import HandoffResolver, Orchestrator
+from .tenant_registry import (
+    CredentialResolver,
+    EnvCredentialResolver,
+    StorageCredentialResolver,
+    TENANT_REGISTRY_KEY,
+    TenantRegistry,
+    default_credential_resolver,
+)
 from .runtime import (
     DefaultRuntime,
     build_default_runtime,
@@ -46,11 +54,17 @@ __all__ = [
     "AgentEventKind",
     "AnthropicClient",
     "AuditSink",
+    "CredentialResolver",
     "DefaultRuntime",
     "DomainAgent",
     "DomainAgentRequest",
     "DriverRegistry",
+    "EnvCredentialResolver",
     "HandoffResolver",
+    "StorageCredentialResolver",
+    "TENANT_REGISTRY_KEY",
+    "TenantRegistry",
+    "default_credential_resolver",
     "InMemoryAuditSink",
     "InMemorySessionStore",
     "Message",

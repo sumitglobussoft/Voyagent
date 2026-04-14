@@ -19,6 +19,11 @@ Design notes
   stops producing events. The client calls
   ``POST /chat/sessions/{id}/messages`` again with an empty ``message``
   and a populated ``approvals`` dict to resume.
+* **Tenant isolation.** Every ``/chat/*`` endpoint takes a
+  :class:`TenantContext` via :func:`get_tenant`. Session lookups compare
+  ``session.tenant_id`` against ``tenant_ctx.tenant_id`` and return
+  ``404`` on mismatch — we deliberately avoid ``403`` so callers cannot
+  probe which session ids belong to other tenants.
 """
 
 from __future__ import annotations
@@ -31,9 +36,11 @@ from functools import lru_cache
 from types import ModuleType
 from typing import Any, AsyncIterator
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
+
+from .tenancy import TenantContext, get_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +94,19 @@ def _runtime_or_503() -> ModuleType:
         )
 
 
+def runtime_available() -> bool:
+    """Return ``True`` iff :mod:`voyagent_agent_runtime` imports cleanly.
+
+    Used by :mod:`voyagent_api.main` at startup for a single log line so
+    operators know whether ``/chat/*`` routes will serve or 503.
+    """
+    try:
+        _runtime()
+    except _RuntimeUnavailable:
+        return False
+    return True
+
+
 # --------------------------------------------------------------------------- #
 # Runtime bundle — one per process, built from env.                           #
 # --------------------------------------------------------------------------- #
@@ -121,8 +141,15 @@ async def _get_bundle() -> Any:
 
 
 class SessionCreateRequest(BaseModel):
-    tenant_id: str = Field(..., min_length=1)
-    actor_id: str = Field(..., min_length=1)
+    """Body for ``POST /chat/sessions``.
+
+    The tenant and actor are derived from the authenticated JWT, so the
+    body is intentionally empty today. We keep the model around so future
+    per-session options (seed system prompt, locale override, ...) can be
+    added without a breaking wire change.
+    """
+
+    model_config = {"extra": "forbid"}
 
 
 class SessionCreateResponse(BaseModel):
@@ -158,30 +185,48 @@ class SendMessageRequest(BaseModel):
     response_model=SessionCreateResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_session(body: SessionCreateRequest) -> SessionCreateResponse:
-    """Create a brand-new chat session."""
+async def create_session(
+    body: SessionCreateRequest | None = None,
+    tenant_ctx: TenantContext = Depends(get_tenant),
+) -> SessionCreateResponse:
+    """Create a brand-new chat session owned by the authenticated tenant."""
     runtime = _runtime_or_503()
     bundle = await _get_bundle()
 
     new_session_id = runtime.new_session_id
-    coerce_entity_id = runtime.coerce_entity_id
     SessionCls = runtime.Session
 
     session = SessionCls(
         id=new_session_id(),
-        tenant_id=coerce_entity_id(body.tenant_id, namespace="voyagent.tenant"),
-        actor_id=coerce_entity_id(body.actor_id, namespace="voyagent.actor"),
+        tenant_id=tenant_ctx.tenant_id,
+        actor_id=tenant_ctx.user_id,
     )
     await bundle.session_store.put(session)
+    logger.info(
+        "chat.session.created session_id=%s tenant=%s actor=%s",
+        session.id,
+        tenant_ctx.tenant_id,
+        tenant_ctx.user_id,
+    )
+    # Silence unused-variable warning on ``body`` — it exists for future options.
+    _ = body
     return SessionCreateResponse(session_id=session.id)
 
 
 @router.get("/sessions/{session_id}", response_model=SessionSummaryResponse)
-async def get_session(session_id: str) -> SessionSummaryResponse:
-    """Return session metadata without message content (history can get big)."""
+async def get_session(
+    session_id: str,
+    tenant_ctx: TenantContext = Depends(get_tenant),
+) -> SessionSummaryResponse:
+    """Return session metadata without message content (history can get big).
+
+    Returns ``404`` both when the session doesn't exist and when it
+    exists but belongs to a different tenant — we don't want to confirm
+    session existence across tenants.
+    """
     bundle = await _get_bundle()
     session = await bundle.session_store.get(session_id)
-    if session is None:
+    if session is None or session.tenant_id != tenant_ctx.tenant_id:
         raise HTTPException(status_code=404, detail="session_not_found")
 
     pending = [
@@ -208,6 +253,7 @@ async def send_message(
     session_id: str,
     body: SendMessageRequest,
     request: Request,
+    tenant_ctx: TenantContext = Depends(get_tenant),
 ) -> EventSourceResponse:
     """Stream an agent turn as SSE.
 
@@ -219,7 +265,7 @@ async def send_message(
     bundle = await _get_bundle()
 
     session = await bundle.session_store.get(session_id)
-    if session is None:
+    if session is None or session.tenant_id != tenant_ctx.tenant_id:
         raise HTTPException(status_code=404, detail="session_not_found")
 
     AgentEventCls = runtime.AgentEvent

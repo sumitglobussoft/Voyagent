@@ -1,0 +1,36 @@
+{
+  "name": "@voyagent/icons",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Curated Voyagent icon set — a narrow re-export of lucide-react to keep bundles small.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "tsc --noEmit",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "lucide-react": "^0.453.0"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@voyagent/config": "workspace:*",
+    "typescript": "^5.6.0",
+    "rimraf": "^6.0.0"
+  }
+}

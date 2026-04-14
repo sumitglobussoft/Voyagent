@@ -1,0 +1,35 @@
+{
+  "name": "@voyagent/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Voyagent desktop shell (Tauri 2 + Vite + React). Hosts local drivers that need OS access (Tally ODBC, GDS terminals, smart-card readers, printers).",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "lint": "tsc --noEmit",
+    "tauri": "tauri",
+    "clean": "rimraf dist src-tauri/target"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "@voyagent/chat": "workspace:*",
+    "@voyagent/core": "workspace:*",
+    "@voyagent/icons": "workspace:*",
+    "@voyagent/sdk": "workspace:*",
+    "@voyagent/ui": "workspace:*",
+    "@tauri-apps/api": "^2.1.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "@voyagent/config": "workspace:*",
+    "@tauri-apps/cli": "^2.1.0",
+    "typescript": "^5.6.0",
+    "vite": "^5.4.0",
+    "rimraf": "^6.0.0"
+  }
+}

@@ -1,17 +1,19 @@
 """Runtime-side driver registry.
 
 A thin container that maps *capability protocol names* (``FareSearchDriver``,
-``PNRDriver``, ...) to concrete driver instances. Tool handlers resolve
-drivers from this registry via :attr:`ToolContext.extensions`.
+``PNRDriver``, ``AccountingDriver``, ``BSPDriver``, ...) to concrete driver
+instances. Tool handlers resolve drivers from this registry via
+:attr:`ToolContext.extensions`.
 
 Keeping the lookup keyed by protocol name rather than by driver name lets
-a tenant swap vendors (Amadeus ↔ Sabre ↔ TBO) without changing any tool
-code.
+a tenant swap vendors (Amadeus <-> Sabre <-> TBO, Tally <-> Zoho, etc.)
+without changing any tool code.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -69,20 +71,60 @@ class DriverRegistry:
 def build_default_registry() -> DriverRegistry:
     """Construct the default v0 registry from environment.
 
-    Reads Amadeus credentials via :class:`AmadeusConfig` (env prefix
-    ``VOYAGENT_AMADEUS_``) and binds the driver under both
-    ``FareSearchDriver`` and ``PNRDriver`` protocols. Network I/O does
-    not occur here — the driver lazy-initialises its HTTP client.
+    Amadeus is always attempted (the prior behaviour). Tally and BSP
+    India are registered opportunistically:
+
+    * :class:`AccountingDriver` -> Tally, iff
+      ``VOYAGENT_TALLY_COMPANY_NAME`` is set.
+    * :class:`BSPDriver` -> BSP India, iff
+      ``VOYAGENT_BSP_INDIA_AGENT_IATA_CODE`` is set.
+
+    Missing env vars are logged at INFO and skipped — a tenant may
+    legitimately not use Tally or BSP.
     """
-    # Local import to keep the module importable in tests that don't
-    # have the Amadeus driver wheel installed.
+    # Local imports keep the module importable in tests that don't have
+    # every driver wheel installed.
     from drivers.amadeus import AmadeusConfig, AmadeusDriver
 
-    config = AmadeusConfig()
-    driver = AmadeusDriver(config)
     registry = DriverRegistry()
-    registry.register("FareSearchDriver", driver)
-    registry.register("PNRDriver", driver)
+
+    amadeus_config = AmadeusConfig()
+    amadeus_driver = AmadeusDriver(amadeus_config)
+    registry.register("FareSearchDriver", amadeus_driver)
+    registry.register("PNRDriver", amadeus_driver)
+
+    if os.environ.get("VOYAGENT_TALLY_COMPANY_NAME"):
+        try:
+            from drivers.tally import TallyConfig, TallyDriver
+
+            tally_config = TallyConfig()
+            tally_driver = TallyDriver(tally_config)
+            registry.register("AccountingDriver", tally_driver)
+            logger.info("driver registry: registered Tally as AccountingDriver")
+        except Exception:  # noqa: BLE001
+            logger.exception("driver registry: Tally registration failed; skipping")
+    else:
+        logger.info(
+            "driver registry: VOYAGENT_TALLY_COMPANY_NAME unset; "
+            "skipping AccountingDriver registration"
+        )
+
+    if os.environ.get("VOYAGENT_BSP_INDIA_AGENT_IATA_CODE"):
+        try:
+            from drivers.bsp_india import BSPIndiaConfig, BSPIndiaDriver
+
+            bsp_config = BSPIndiaConfig()
+            bsp_driver = BSPIndiaDriver(bsp_config)
+            registry.register("BSPDriver", bsp_driver)
+            logger.info("driver registry: registered BSP India as BSPDriver")
+        except Exception:  # noqa: BLE001
+            logger.exception("driver registry: BSP India registration failed; skipping")
+    else:
+        logger.info(
+            "driver registry: VOYAGENT_BSP_INDIA_AGENT_IATA_CODE unset; "
+            "skipping BSPDriver registration"
+        )
+
     return registry
 
 

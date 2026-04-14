@@ -1,4 +1,0 @@
-{
-  "//": "ESLint setup pending migration to flat config. `@voyagent/config/eslint/nextjs` exports a flat config that isn't consumable from .eslintrc.json; moving apps/web to eslint.config.js is a follow-up. Until then we keep the working legacy extends so `next lint` stays green.",
-  "extends": "next/core-web-vitals"
-}
