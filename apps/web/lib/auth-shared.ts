@@ -24,9 +24,12 @@ export function jwtExpMs(token: string): number {
   if (!token) return 0;
   const parts = token.split(".");
   if (parts.length < 2) return 0;
+  const raw = parts[1];
+  // tsconfig has noUncheckedIndexedAccess on, so narrow before use.
+  if (raw === undefined) return 0;
   try {
     // base64url -> base64
-    const payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const payload = raw.replace(/-/g, "+").replace(/_/g, "/");
     const padded = payload + "=".repeat((4 - (payload.length % 4)) % 4);
     // atob is available in both Edge and Node 18+ runtimes.
     const json = typeof atob === "function"
