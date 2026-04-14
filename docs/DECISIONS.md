@@ -298,7 +298,7 @@ Revisit when a clear customer pull exists.
 
 **Follow-ups.**
 - Remove any lingering Temporal references from docs, READMEs, and compose files as part of this pass. (Done alongside this ADR.)
-- When the first durable use case arrives, spin a fresh ADR (D<N>) that picks one and documents the migration path from the in-process loop.
+- When the first durable use case arrives, spin a fresh ADR (`D<N>`) that picks one and documents the migration path from the in-process loop.
 
 ---
 
