@@ -13,8 +13,8 @@
     "clean": "rm -rf playwright-report test-results"
   },
   "dependencies": {
-    "@playwright/test": "^1.49.0",
-    "@axe-core/playwright": "^4.10.0"
+    "@playwright/test": "1.49.0",
+    "@axe-core/playwright": "4.10.0"
   },
   "devDependencies": {
     "typescript": "^5.6.0",
