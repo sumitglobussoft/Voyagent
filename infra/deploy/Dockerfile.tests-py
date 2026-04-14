@@ -72,8 +72,10 @@ RUN uv sync --all-packages \
       lxml
 
 # ENTRYPOINT lets compose services override with arbitrary shell
-# pipelines without having to wrap in `sh -c`.
-ENTRYPOINT ["/bin/bash", "-lc"]
+# pipelines without having to wrap in `sh -c`. We use `-c` (NOT `-lc`)
+# so the Dockerfile's ENV PATH is inherited — login-mode bash runs
+# /etc/profile which clobbers PATH and hides /app/.venv/bin.
+ENTRYPOINT ["/bin/bash", "-c"]
 
 # Default command is a no-op help dump so an accidental `docker run`
 # without a compose service doesn't look like a hang.
