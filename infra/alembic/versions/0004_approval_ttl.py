@@ -125,12 +125,14 @@ def upgrade() -> None:
             ),
         )
         # Backfill status from the pre-existing ``granted`` tri-state.
+        # Literals need an explicit cast — Postgres won't implicitly coerce
+        # text to an enum in a CASE expression.
         op.execute(
             sa.text(
-                "UPDATE pending_approvals SET status = CASE "
+                "UPDATE pending_approvals SET status = (CASE "
                 "  WHEN granted IS TRUE THEN 'granted' "
                 "  WHEN granted IS FALSE THEN 'rejected' "
-                "  ELSE 'pending' END"
+                "  ELSE 'pending' END)::approval_status"
             )
         )
 
