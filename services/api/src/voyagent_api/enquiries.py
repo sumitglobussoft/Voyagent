@@ -38,7 +38,7 @@ from .auth_inhouse.deps import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/enquiries", tags=["enquiries"])
+router = APIRouter(prefix="/enquiries", tags=["enquiries"])
 
 
 # --------------------------------------------------------------------------- #

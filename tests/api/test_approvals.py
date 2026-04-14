@@ -132,18 +132,18 @@ async def _insert_approval(
 
 
 def test_list_requires_auth(client: TestClient) -> None:
-    r = client.get("/api/approvals")
+    r = client.get("/approvals")
     assert r.status_code == 401
 
 
 def test_get_requires_auth(client: TestClient) -> None:
-    r = client.get(f"/api/approvals/{uuid.uuid4()}")
+    r = client.get(f"/approvals/{uuid.uuid4()}")
     assert r.status_code == 401
 
 
 def test_resolve_requires_auth(client: TestClient) -> None:
     r = client.post(
-        f"/api/approvals/{uuid.uuid4()}/resolve",
+        f"/approvals/{uuid.uuid4()}/resolve",
         json={"granted": True},
     )
     assert r.status_code == 401
@@ -167,7 +167,7 @@ async def test_list_returns_tenant_pending_approvals(client: TestClient) -> None
     )
 
     r = client.get(
-        "/api/approvals",
+        "/approvals",
         headers={"Authorization": f"Bearer {signup['access_token']}"},
     )
     assert r.status_code == 200, r.text
@@ -194,7 +194,7 @@ async def test_list_filters_by_session_id(client: TestClient) -> None:
     await _insert_approval(approval_id="ap-b", session_id=sid_b)
 
     r = client.get(
-        f"/api/approvals?session_id={sid_b}",
+        f"/approvals?session_id={sid_b}",
         headers={"Authorization": f"Bearer {signup['access_token']}"},
     )
     assert r.status_code == 200
@@ -218,14 +218,14 @@ async def test_list_status_all_shows_resolved_and_pending(
 
     # Default status=pending hides the granted one.
     r = client.get(
-        "/api/approvals",
+        "/approvals",
         headers={"Authorization": f"Bearer {signup['access_token']}"},
     )
     assert {i["id"] for i in r.json()["items"]} == {"ap-1"}
 
     # status=all shows both.
     r_all = client.get(
-        "/api/approvals?status=all",
+        "/approvals?status=all",
         headers={"Authorization": f"Bearer {signup['access_token']}"},
     )
     assert {i["id"] for i in r_all.json()["items"]} == {"ap-1", "ap-2"}
@@ -240,13 +240,13 @@ async def test_list_tenant_isolation(client: TestClient) -> None:
     await _insert_approval(approval_id="ap-b", session_id=sid_b)
 
     r_a = client.get(
-        "/api/approvals",
+        "/approvals",
         headers={"Authorization": f"Bearer {a['access_token']}"},
     )
     assert {i["id"] for i in r_a.json()["items"]} == {"ap-a"}
 
     r_b = client.get(
-        "/api/approvals",
+        "/approvals",
         headers={"Authorization": f"Bearer {b['access_token']}"},
     )
     assert {i["id"] for i in r_b.json()["items"]} == {"ap-b"}
@@ -266,7 +266,7 @@ async def test_list_lazy_sweep_expires_past_deadline(client: TestClient) -> None
 
     # status=pending should now be empty because the sweep flipped it.
     r = client.get(
-        "/api/approvals",
+        "/approvals",
         headers={"Authorization": f"Bearer {signup['access_token']}"},
     )
     assert r.status_code == 200
@@ -274,7 +274,7 @@ async def test_list_lazy_sweep_expires_past_deadline(client: TestClient) -> None
 
     # status=all shows the row as expired.
     r_all = client.get(
-        "/api/approvals?status=all",
+        "/approvals?status=all",
         headers={"Authorization": f"Bearer {signup['access_token']}"},
     )
     items = r_all.json()["items"]
@@ -294,7 +294,7 @@ async def test_get_happy_path(client: TestClient) -> None:
     await _insert_approval(approval_id="ap-1", session_id=sid)
 
     r = client.get(
-        "/api/approvals/ap-1",
+        "/approvals/ap-1",
         headers={"Authorization": f"Bearer {signup['access_token']}"},
     )
     assert r.status_code == 200, r.text
@@ -308,7 +308,7 @@ async def test_get_cross_tenant_returns_404(client: TestClient) -> None:
     await _insert_approval(approval_id="ap-a", session_id=sid_a)
 
     r = client.get(
-        "/api/approvals/ap-a",
+        "/approvals/ap-a",
         headers={"Authorization": f"Bearer {b['access_token']}"},
     )
     assert r.status_code == 404
@@ -318,7 +318,7 @@ async def test_get_cross_tenant_returns_404(client: TestClient) -> None:
 def test_get_unknown_returns_404(client: TestClient) -> None:
     signup = _sign_up(client, email="alice@a.com", agency="A")
     r = client.get(
-        "/api/approvals/does-not-exist",
+        "/approvals/does-not-exist",
         headers={"Authorization": f"Bearer {signup['access_token']}"},
     )
     assert r.status_code == 404
@@ -336,7 +336,7 @@ async def test_resolve_grant_happy_path(client: TestClient) -> None:
     await _insert_approval(approval_id="ap-1", session_id=sid)
 
     r = client.post(
-        "/api/approvals/ap-1/resolve",
+        "/approvals/ap-1/resolve",
         json={"granted": True, "reason": "looks good"},
         headers={"Authorization": f"Bearer {signup['access_token']}"},
     )
@@ -353,7 +353,7 @@ async def test_resolve_reject_happy_path(client: TestClient) -> None:
     await _insert_approval(approval_id="ap-1", session_id=sid)
 
     r = client.post(
-        "/api/approvals/ap-1/resolve",
+        "/approvals/ap-1/resolve",
         json={"granted": False},
         headers={"Authorization": f"Bearer {signup['access_token']}"},
     )
@@ -372,7 +372,7 @@ async def test_resolve_already_resolved_returns_409(client: TestClient) -> None:
     )
 
     r = client.post(
-        "/api/approvals/ap-1/resolve",
+        "/approvals/ap-1/resolve",
         json={"granted": True},
         headers={"Authorization": f"Bearer {signup['access_token']}"},
     )
@@ -390,14 +390,14 @@ async def test_resolve_idempotent_second_call_returns_409(
     token = signup["access_token"]
 
     r1 = client.post(
-        "/api/approvals/ap-1/resolve",
+        "/approvals/ap-1/resolve",
         json={"granted": True},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert r1.status_code == 200
 
     r2 = client.post(
-        "/api/approvals/ap-1/resolve",
+        "/approvals/ap-1/resolve",
         json={"granted": False},
         headers={"Authorization": f"Bearer {token}"},
     )
@@ -413,7 +413,7 @@ async def test_resolve_cross_tenant_returns_404_not_403(
     await _insert_approval(approval_id="ap-a", session_id=sid_a)
 
     r = client.post(
-        "/api/approvals/ap-a/resolve",
+        "/approvals/ap-a/resolve",
         json={"granted": True},
         headers={"Authorization": f"Bearer {b['access_token']}"},
     )
@@ -424,7 +424,7 @@ async def test_resolve_cross_tenant_returns_404_not_403(
 def test_resolve_unknown_returns_404(client: TestClient) -> None:
     signup = _sign_up(client, email="alice@a.com", agency="A")
     r = client.post(
-        "/api/approvals/no-such-thing/resolve",
+        "/approvals/no-such-thing/resolve",
         json={"granted": True},
         headers={"Authorization": f"Bearer {signup['access_token']}"},
     )
@@ -434,7 +434,7 @@ def test_resolve_unknown_returns_404(client: TestClient) -> None:
 def test_resolve_422_on_missing_granted(client: TestClient) -> None:
     signup = _sign_up(client, email="alice@a.com", agency="A")
     r = client.post(
-        "/api/approvals/ap-x/resolve",
+        "/approvals/ap-x/resolve",
         json={},
         headers={"Authorization": f"Bearer {signup['access_token']}"},
     )
@@ -458,7 +458,7 @@ async def test_resolve_past_deadline_returns_409_and_expires(
 
     # Resolve bypasses the list sweep — verify the per-row deadline check.
     r = client.post(
-        "/api/approvals/ap-stale/resolve",
+        "/approvals/ap-stale/resolve",
         json={"granted": True},
         headers={"Authorization": f"Bearer {signup['access_token']}"},
     )

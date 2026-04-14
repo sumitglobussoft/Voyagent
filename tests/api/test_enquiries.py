@@ -99,7 +99,7 @@ def _create(
 ) -> dict:
     body = {**_BASE_PAYLOAD, **(overrides or {})}
     r = client.post(
-        "/api/enquiries",
+        "/enquiries",
         json=body,
         headers={"Authorization": f"Bearer {token}"},
     )
@@ -113,30 +113,30 @@ def _create(
 
 
 def test_list_requires_auth(client: TestClient) -> None:
-    r = client.get("/api/enquiries")
+    r = client.get("/enquiries")
     assert r.status_code == 401
 
 
 def test_post_requires_auth(client: TestClient) -> None:
-    r = client.post("/api/enquiries", json=_BASE_PAYLOAD)
+    r = client.post("/enquiries", json=_BASE_PAYLOAD)
     assert r.status_code == 401
 
 
 def test_get_one_requires_auth(client: TestClient) -> None:
-    r = client.get(f"/api/enquiries/{uuid.uuid4()}")
+    r = client.get(f"/enquiries/{uuid.uuid4()}")
     assert r.status_code == 401
 
 
 def test_patch_requires_auth(client: TestClient) -> None:
     r = client.patch(
-        f"/api/enquiries/{uuid.uuid4()}", json={"customer_name": "X"}
+        f"/enquiries/{uuid.uuid4()}", json={"customer_name": "X"}
     )
     assert r.status_code == 401
 
 
 def test_promote_requires_auth(client: TestClient) -> None:
     r = client.post(
-        f"/api/enquiries/{uuid.uuid4()}/promote-to-session",
+        f"/enquiries/{uuid.uuid4()}/promote-to-session",
     )
     assert r.status_code == 401
 
@@ -161,7 +161,7 @@ def test_create_happy_path(client: TestClient) -> None:
 def test_create_rejects_invalid_currency(client: TestClient) -> None:
     signup = _sign_up(client, email="alice@a.com", agency="A")
     r = client.post(
-        "/api/enquiries",
+        "/enquiries",
         json={**_BASE_PAYLOAD, "budget_currency": "usd"},
         headers={"Authorization": f"Bearer {signup['access_token']}"},
     )
@@ -172,7 +172,7 @@ def test_create_rejects_invalid_currency(client: TestClient) -> None:
 def test_create_rejects_invalid_date_range(client: TestClient) -> None:
     signup = _sign_up(client, email="alice@a.com", agency="A")
     r = client.post(
-        "/api/enquiries",
+        "/enquiries",
         json={
             **_BASE_PAYLOAD,
             "depart_date": "2026-07-10",
@@ -187,7 +187,7 @@ def test_create_rejects_invalid_date_range(client: TestClient) -> None:
 def test_create_rejects_invalid_pax_count(client: TestClient) -> None:
     signup = _sign_up(client, email="alice@a.com", agency="A")
     r = client.post(
-        "/api/enquiries",
+        "/enquiries",
         json={**_BASE_PAYLOAD, "pax_count": 0},
         headers={"Authorization": f"Bearer {signup['access_token']}"},
     )
@@ -198,7 +198,7 @@ def test_create_rejects_invalid_pax_count(client: TestClient) -> None:
 def test_create_rejects_unknown_field_422(client: TestClient) -> None:
     signup = _sign_up(client, email="alice@a.com", agency="A")
     r = client.post(
-        "/api/enquiries",
+        "/enquiries",
         json={**_BASE_PAYLOAD, "tenant_id": str(uuid.uuid4())},
         headers={"Authorization": f"Bearer {signup['access_token']}"},
     )
@@ -208,7 +208,7 @@ def test_create_rejects_unknown_field_422(client: TestClient) -> None:
 def test_create_rejects_empty_customer_name(client: TestClient) -> None:
     signup = _sign_up(client, email="alice@a.com", agency="A")
     r = client.post(
-        "/api/enquiries",
+        "/enquiries",
         json={**_BASE_PAYLOAD, "customer_name": ""},
         headers={"Authorization": f"Bearer {signup['access_token']}"},
     )
@@ -226,7 +226,7 @@ def test_list_shows_tenant_enquiries(client: TestClient) -> None:
     _create(client, token, overrides={"customer_name": "Alpha"})
     _create(client, token, overrides={"customer_name": "Beta"})
     r = client.get(
-        "/api/enquiries",
+        "/enquiries",
         headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 200
@@ -243,7 +243,7 @@ def test_list_tenant_isolation(client: TestClient) -> None:
     _create(client, b["access_token"], overrides={"customer_name": "B-only"})
 
     r_a = client.get(
-        "/api/enquiries",
+        "/enquiries",
         headers={"Authorization": f"Bearer {a['access_token']}"},
     )
     names_a = {i["customer_name"] for i in r_a.json()["items"]}
@@ -256,7 +256,7 @@ def test_list_filters_by_status(client: TestClient) -> None:
     created = _create(client, token, overrides={"customer_name": "Alpha"})
     # Promote one to 'quoted'.
     r_patch = client.patch(
-        f"/api/enquiries/{created['id']}",
+        f"/enquiries/{created['id']}",
         json={"status": "quoted"},
         headers={"Authorization": f"Bearer {token}"},
     )
@@ -264,7 +264,7 @@ def test_list_filters_by_status(client: TestClient) -> None:
     _create(client, token, overrides={"customer_name": "Beta"})
 
     r = client.get(
-        "/api/enquiries?status=quoted",
+        "/enquiries?status=quoted",
         headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 200
@@ -288,7 +288,7 @@ def test_list_search_q_is_case_insensitive(client: TestClient) -> None:
     )
 
     r = client.get(
-        "/api/enquiries?q=MALHOTRA",
+        "/enquiries?q=MALHOTRA",
         headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 200
@@ -298,7 +298,7 @@ def test_list_search_q_is_case_insensitive(client: TestClient) -> None:
 
     # Match in destination too.
     r2 = client.get(
-        "/api/enquiries?q=bkk",
+        "/enquiries?q=bkk",
         headers={"Authorization": f"Bearer {token}"},
     )
     items2 = r2.json()["items"]
@@ -317,7 +317,7 @@ def test_get_happy_path(client: TestClient) -> None:
     created = _create(client, token)
 
     r = client.get(
-        f"/api/enquiries/{created['id']}",
+        f"/enquiries/{created['id']}",
         headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 200
@@ -330,7 +330,7 @@ def test_get_cross_tenant_returns_404(client: TestClient) -> None:
     created = _create(client, a["access_token"])
 
     r = client.get(
-        f"/api/enquiries/{created['id']}",
+        f"/enquiries/{created['id']}",
         headers={"Authorization": f"Bearer {b['access_token']}"},
     )
     assert r.status_code == 404
@@ -340,7 +340,7 @@ def test_get_cross_tenant_returns_404(client: TestClient) -> None:
 def test_get_invalid_uuid_returns_404(client: TestClient) -> None:
     signup = _sign_up(client, email="alice@a.com", agency="A")
     r = client.get(
-        "/api/enquiries/not-a-uuid",
+        "/enquiries/not-a-uuid",
         headers={"Authorization": f"Bearer {signup['access_token']}"},
     )
     assert r.status_code == 404
@@ -349,7 +349,7 @@ def test_get_invalid_uuid_returns_404(client: TestClient) -> None:
 def test_get_unknown_uuid_returns_404(client: TestClient) -> None:
     signup = _sign_up(client, email="alice@a.com", agency="A")
     r = client.get(
-        f"/api/enquiries/{uuid.uuid4()}",
+        f"/enquiries/{uuid.uuid4()}",
         headers={"Authorization": f"Bearer {signup['access_token']}"},
     )
     assert r.status_code == 404
@@ -366,7 +366,7 @@ def test_patch_partial_update_leaves_omitted_alone(client: TestClient) -> None:
     created = _create(client, token)
 
     r = client.patch(
-        f"/api/enquiries/{created['id']}",
+        f"/enquiries/{created['id']}",
         json={"customer_name": "Alice New"},
         headers={"Authorization": f"Bearer {token}"},
     )
@@ -384,7 +384,7 @@ def test_patch_explicit_null_clears_nullable_field(client: TestClient) -> None:
     created = _create(client, token)
 
     r = client.patch(
-        f"/api/enquiries/{created['id']}",
+        f"/enquiries/{created['id']}",
         json={"customer_email": None},
         headers={"Authorization": f"Bearer {token}"},
     )
@@ -399,7 +399,7 @@ def test_patch_rejects_cancelled_to_open_transition(client: TestClient) -> None:
 
     # Move to cancelled (terminal).
     r_cancel = client.patch(
-        f"/api/enquiries/{created['id']}",
+        f"/enquiries/{created['id']}",
         json={"status": "cancelled"},
         headers={"Authorization": f"Bearer {token}"},
     )
@@ -408,7 +408,7 @@ def test_patch_rejects_cancelled_to_open_transition(client: TestClient) -> None:
 
     # Attempt to reopen to 'new' — forbidden.
     r = client.patch(
-        f"/api/enquiries/{created['id']}",
+        f"/enquiries/{created['id']}",
         json={"status": "new"},
         headers={"Authorization": f"Bearer {token}"},
     )
@@ -423,7 +423,7 @@ def test_patch_rejects_booked_to_open_transition(client: TestClient) -> None:
 
     # Move to booked (terminal).
     r_book = client.patch(
-        f"/api/enquiries/{created['id']}",
+        f"/enquiries/{created['id']}",
         json={"status": "booked"},
         headers={"Authorization": f"Bearer {token}"},
     )
@@ -432,7 +432,7 @@ def test_patch_rejects_booked_to_open_transition(client: TestClient) -> None:
 
     # Attempt to revert to 'quoted' — forbidden.
     r = client.patch(
-        f"/api/enquiries/{created['id']}",
+        f"/enquiries/{created['id']}",
         json={"status": "quoted"},
         headers={"Authorization": f"Bearer {token}"},
     )
@@ -446,7 +446,7 @@ def test_patch_cross_tenant_returns_404(client: TestClient) -> None:
     created = _create(client, a["access_token"])
 
     r = client.patch(
-        f"/api/enquiries/{created['id']}",
+        f"/enquiries/{created['id']}",
         json={"customer_name": "sneaky"},
         headers={"Authorization": f"Bearer {b['access_token']}"},
     )
@@ -458,7 +458,7 @@ def test_patch_validates_currency(client: TestClient) -> None:
     token = signup["access_token"]
     created = _create(client, token)
     r = client.patch(
-        f"/api/enquiries/{created['id']}",
+        f"/enquiries/{created['id']}",
         json={"budget_currency": "eur"},
         headers={"Authorization": f"Bearer {token}"},
     )
@@ -471,7 +471,7 @@ def test_patch_validates_pax(client: TestClient) -> None:
     token = signup["access_token"]
     created = _create(client, token)
     r = client.patch(
-        f"/api/enquiries/{created['id']}",
+        f"/enquiries/{created['id']}",
         json={"pax_count": 0},
         headers={"Authorization": f"Bearer {token}"},
     )
@@ -487,7 +487,7 @@ def test_patch_validates_date_range_cross_field(client: TestClient) -> None:
 
     # Patch only depart so return_date < depart_date after merging.
     r = client.patch(
-        f"/api/enquiries/{created['id']}",
+        f"/enquiries/{created['id']}",
         json={"depart_date": "2026-08-01"},
         headers={"Authorization": f"Bearer {token}"},
     )
@@ -500,7 +500,7 @@ def test_patch_unknown_field_422(client: TestClient) -> None:
     token = signup["access_token"]
     created = _create(client, token)
     r = client.patch(
-        f"/api/enquiries/{created['id']}",
+        f"/enquiries/{created['id']}",
         json={"not_a_real_field": "x"},
         headers={"Authorization": f"Bearer {token}"},
     )
@@ -518,7 +518,7 @@ def test_promote_creates_session_and_writes_link(client: TestClient) -> None:
     created = _create(client, token)
 
     r = client.post(
-        f"/api/enquiries/{created['id']}/promote-to-session",
+        f"/enquiries/{created['id']}/promote-to-session",
         headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 200, r.text
@@ -533,14 +533,14 @@ def test_promote_is_idempotent(client: TestClient) -> None:
     created = _create(client, token)
 
     r1 = client.post(
-        f"/api/enquiries/{created['id']}/promote-to-session",
+        f"/enquiries/{created['id']}/promote-to-session",
         headers={"Authorization": f"Bearer {token}"},
     )
     assert r1.status_code == 200
     sid_1 = r1.json()["session_id"]
 
     r2 = client.post(
-        f"/api/enquiries/{created['id']}/promote-to-session",
+        f"/enquiries/{created['id']}/promote-to-session",
         headers={"Authorization": f"Bearer {token}"},
     )
     assert r2.status_code == 200
@@ -555,7 +555,7 @@ def test_promote_cross_tenant_returns_404(client: TestClient) -> None:
     created = _create(client, a["access_token"])
 
     r = client.post(
-        f"/api/enquiries/{created['id']}/promote-to-session",
+        f"/enquiries/{created['id']}/promote-to-session",
         headers={"Authorization": f"Bearer {b['access_token']}"},
     )
     assert r.status_code == 404
