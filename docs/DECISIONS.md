@@ -228,6 +228,54 @@ Revisit when a clear customer pull exists.
 
 ---
 
+## D10 — Canonical domain model v0 landed
+
+**Date:** 2026-04-14
+**Status:** Accepted
+
+**Context.** Every agent, tool, and driver needs a single vocabulary before any code can be written against the adapter layer ([D2](#d2--vendor-agnostic-across-gds-and-accounting)). The globalization contract ([D8](#d8--india-first-go-to-market-global-ready-architecture)) must be baked in from the first draft or we'll pay for it later.
+
+**Decision.** Commit Pydantic v2 definitions under [`schemas/canonical/`](../schemas/canonical/) covering primitives, identity, travel, finance, and lifecycle. The first vertical slice (Amadeus + Tally + BSP India) will build against this spec.
+
+**Scope delivered.**
+- **Primitives:** `Money`, `TaxLine` + `TaxRegime`, `NationalId`, `Address`, `Phone`, `Email`, `LocalizedText`, `Period`, ISO-code aliases (`CountryCode`, `CurrencyCode`, `LanguageCode`, `IATACode`), `Gender`, `EntityId`, `Timestamps`.
+- **Identity:** `Client` (with `TaxRegistration`), `Passenger`, `Passport`.
+- **Travel — full:** `Itinerary`, `FlightSegment`, `Fare`, `PNR`, `Ticket`, `Booking`.
+- **Travel — skeleton:** `HotelStay`, `HotelBooking`, `TransferSegment`, `VisaFile` + `VisaChecklistItem` (enough for drivers to start; fields will expand in v1).
+- **Finance:** `Invoice`, `InvoiceLine`, `Payment`, `Receipt`, `LedgerAccount`, `JournalEntry` (with per-currency balancing invariant), `BSPReport`, `Reconciliation`.
+- **Lifecycle:** `Enquiry`, `Document`, `AuditEvent`.
+
+**Invariants encoded in the spec:**
+- `Money` rejects `float`; arithmetic requires matching currencies.
+- `TaxLine` uses `rate_bps` (basis points) — no float rate math anywhere.
+- `Passport` date ordering and `Period` UTC-awareness are validated at the model layer.
+- `JournalEntry` enforces debits == credits per currency.
+- No India-specific fields anywhere in shared code. GST, PAN, Aadhaar, PIN are either `TaxLine` regime, `NationalId` entries, or free-form `Address` fields.
+
+**Deferred to v1 (documented in [CANONICAL_MODEL.md](./CANONICAL_MODEL.md)):**
+- Typed `Enquiry.requirements` per domain (currently `dict[str, Any]`).
+- Tenant / User / Role types (blocked on auth provider decision).
+- Structured fare rules and cancellation rules (free-form `LocalizedText` for now).
+- FX / multi-currency rate primitives.
+- Voucher type and full hotel/visa field sets.
+
+**Alternatives considered.**
+- *JSON Schema hand-authored first, Pydantic later.* Rejected — duplicates the source of truth and we'd end up generating JSON Schema from Pydantic anyway (per [D9](#d9--tech-stack-typescript-frontends--python-agentdriver-runtime)).
+- *TypeScript-first canonical model with Zod / Valibot.* Rejected — drivers and agent runtime are Python per [D9]; Pydantic is the better fit and still yields TS types via the OpenAPI codegen.
+- *Thinner v0 (primitives only).* Rejected — drivers can't start without the domain objects they'll produce/consume. v0 as landed is the minimum surface to unblock the first vertical slice.
+
+**Consequences.**
+- Drivers have a stable contract to build against before the agent runtime exists.
+- Any change to these models between v0 and v1 must follow the evolution policy in [CANONICAL_MODEL.md](./CANONICAL_MODEL.md#evolution-policy).
+- The CI codegen gate (`Pydantic → OpenAPI → @voyagent/core`) becomes a blocking check the moment `services/api` scaffolds.
+
+**Follow-ups.**
+- Wire `schemas/canonical` into `pyproject.toml` as a workspace member when we leave planning.
+- Add the CI linter that rejects `inr`/`gst`/`aadhaar`/`pan`/`pincode` token leakage in non-India-driver code paths (see [D8](#d8--india-first-go-to-market-global-ready-architecture)).
+- Write unit tests for the invariants (money-with-float rejection, journal balancing, period ordering, passport date ordering) before the first driver lands.
+
+---
+
 ## Template for future entries
 
 ```

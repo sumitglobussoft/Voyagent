@@ -154,15 +154,15 @@ This proves the adapter pattern. After this, adding Sabre or Zoho Books becomes 
 
 ## 9. Open questions (to resolve before build start)
 
-1. **Canonical domain model v0.** Draft Pydantic v2 models in `schemas/canonical/` including `Money`, `TaxLine`, `TaxRegime`, `NationalId`, country-scoped `Address` from the first pass (see [D8](./docs/DECISIONS.md#d8--india-first-go-to-market-global-ready-architecture)).
-2. **Credential vault & multi-tenant isolation model.** Per-tenant KMS? BYO-key option for enterprise customers?
-3. **Auth provider.** Clerk vs WorkOS vs Ory. Decide when the first protected route is scaffolded.
-4. **Pricing & packaging signal.** Influences whether Voyagent should also be single-binary (self-hosted-friendly) or cloud-only.
+1. **Credential vault & multi-tenant isolation model.** Per-tenant KMS? BYO-key option for enterprise customers?
+2. **Auth provider.** Clerk vs WorkOS vs Ory. Decide when the first protected route is scaffolded.
+3. **Pricing & packaging signal.** Influences whether Voyagent should also be single-binary (self-hosted-friendly) or cloud-only.
 
 **Resolved:**
 - ~~Market focus — India-first or global from day one?~~ **India-first go-to-market, globalization-safe architecture from day one.** See [D8](./docs/DECISIONS.md#d8--india-first-go-to-market-global-ready-architecture).
 - ~~Tech stack & repo layout.~~ **TypeScript frontends (Next.js web, Tauri 2 desktop, Expo mobile) + Python agent/driver runtime (FastAPI, Pydantic v2, Temporal, Playwright). pnpm + Turborepo monorepo with a uv workspace for Python.** See [D9](./docs/DECISIONS.md#d9--tech-stack-typescript-frontends--python-agentdriver-runtime) and [STACK.md](./docs/STACK.md).
 - ~~Agent runtime choice.~~ **Anthropic Python SDK with prompt caching enabled from day one, wrapped in our own orchestrator + domain-agent state machines.** See [D9](./docs/DECISIONS.md#d9--tech-stack-typescript-frontends--python-agentdriver-runtime).
+- ~~Canonical domain model v0.~~ **Landed under [`schemas/canonical/`](./schemas/canonical/):** primitives, identity, travel (flights full; hotels/visa/transfers skeletons), finance, and lifecycle types, with the D8 globalization contract baked in. See [D10](./docs/DECISIONS.md#d10--canonical-domain-model-v0-landed) and [docs/CANONICAL_MODEL.md](./docs/CANONICAL_MODEL.md).
 
 ## 10. Repository layout (planned)
 
@@ -179,16 +179,18 @@ voyagent/
 │   ├── ACTIVITIES.md          ← verbatim activity inventory from the customer
 │   ├── ARCHITECTURE.md        ← deep-dive on the 6-layer architecture
 │   ├── DECISIONS.md           ← decision log
-│   └── STACK.md               ← tech stack + repo layout + tooling
+│   ├── STACK.md               ← tech stack + repo layout + tooling
+│   └── CANONICAL_MODEL.md     ← canonical domain model design rationale
+├── schemas/canonical/         ← Pydantic v2 — the single source of truth (v0 landed)
 ├── apps/                      ← (future) web (Next.js), desktop (Tauri 2), mobile (Expo)
 ├── packages/                  ← (future) @voyagent/core, ui, chat, sdk, config, icons
 ├── services/                  ← (future) api, agent_runtime, worker, browser_runner
 ├── drivers/                   ← (future) one package per GDS / accounting / portal / rail
-├── schemas/canonical/         ← (future) Pydantic v2 — the single source of truth
 └── infra/                     ← (future) docker, terraform, codegen scripts
 ```
 
-Only the root files and `docs/` exist today. Everything else is planned, not built.
+`docs/` and `schemas/canonical/` exist today. Everything else is planned,
+not built.
 
 ## 11. Contributing
 
