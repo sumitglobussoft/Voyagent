@@ -1,0 +1,128 @@
+# Voyagent test-runner overlay — run the full test matrix inside Docker.
+#
+# Invocation (see infra/deploy/scripts/run-tests-on-server.sh for the
+# one-command wrapper):
+#
+#   docker compose -f infra/deploy/compose.tests.yml \
+#                  --env-file /opt/voyagent/.env.prod \
+#                  --profile tests-unit run --rm tests-py-unit
+#
+# Results land under /opt/voyagent/test-results/<suite>/ on the host.
+# Live + E2E suites attach to the external `voyagent_net` network that
+# compose.prod.yml creates — they target http://nginx:80 so they hit
+# the in-network edge and avoid Cloudflare flakiness.
+#
+# Every service is profile-gated and `restart: "no"` — these containers
+# run to completion and exit.
+
+name: voyagent-tests
+
+networks:
+  # External reference only: the prod stack owns the network lifecycle.
+  # If the prod stack isn't up, attempts to run tests-py-live or
+  # tests-e2e will fail fast with "network voyagent_net not found",
+  # which is the intended behavior.
+  voyagent_net:
+    name: voyagent_net
+    external: true
+
+services:
+  # ------------------------------------------------------------------ #
+  # Python unit / integration suites (no network to the prod stack)    #
+  # ------------------------------------------------------------------ #
+  tests-py-unit:
+    build:
+      context: ../..
+      dockerfile: infra/deploy/Dockerfile.tests-py
+      args:
+        VOYAGENT_VERSION: ${VOYAGENT_VERSION:-0.0.0-dev}
+    image: voyagent-tests-py:${VOYAGENT_VERSION:-latest}
+    container_name: voyagent_tests_py_unit
+    profiles: ["tests-unit"]
+    restart: "no"
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+      # Unit tests don't need a live base URL but we still set a
+      # default so anything that imports the env var doesn't KeyError.
+      VOYAGENT_BASE_URL: "http://localhost/"
+    volumes:
+      - /opt/voyagent/test-results/py-unit:/app/test-results
+    command:
+      - >-
+        pytest
+        tests/canonical
+        tests/drivers
+        tests/agent_runtime
+        tests/api
+        tests/storage
+        tests/services
+        --ignore=tests/live
+        --ignore=tests/e2e
+        --junitxml=/app/test-results/junit.xml
+        --json-report
+        --json-report-file=/app/test-results/report.json
+        -n auto
+        -v
+
+  # ------------------------------------------------------------------ #
+  # Python live HTTP suite — hits the running prod stack via nginx     #
+  # ------------------------------------------------------------------ #
+  tests-py-live:
+    # Same image as tests-py-unit: build once, reuse.
+    image: voyagent-tests-py:${VOYAGENT_VERSION:-latest}
+    build:
+      context: ../..
+      dockerfile: infra/deploy/Dockerfile.tests-py
+      args:
+        VOYAGENT_VERSION: ${VOYAGENT_VERSION:-0.0.0-dev}
+    container_name: voyagent_tests_py_live
+    profiles: ["tests-live"]
+    restart: "no"
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+      # In-network edge, not the public Cloudflare URL — faster and
+      # avoids Cloudflare-injected 5xx flakes. Override with
+      # --base-url on run-tests-on-server.sh if you need external.
+      VOYAGENT_BASE_URL: ${VOYAGENT_BASE_URL:-http://nginx:80}
+    networks:
+      - voyagent_net
+    volumes:
+      - /opt/voyagent/test-results/py-live:/app/test-results
+    command:
+      - >-
+        pytest
+        tests/live
+        --junitxml=/app/test-results/junit.xml
+        --json-report
+        --json-report-file=/app/test-results/report.json
+        -v
+
+  # ------------------------------------------------------------------ #
+  # Playwright E2E suite — hits the running prod stack via nginx       #
+  # ------------------------------------------------------------------ #
+  tests-e2e:
+    build:
+      context: ../..
+      dockerfile: infra/deploy/Dockerfile.tests-e2e
+      args:
+        VOYAGENT_VERSION: ${VOYAGENT_VERSION:-0.0.0-dev}
+    image: voyagent-tests-e2e:${VOYAGENT_VERSION:-latest}
+    container_name: voyagent_tests_e2e
+    profiles: ["tests-e2e"]
+    restart: "no"
+    environment:
+      CI: "1"
+      VOYAGENT_BASE_URL: ${VOYAGENT_BASE_URL:-http://nginx:80}
+      PLAYWRIGHT_HTML_REPORT: /app/tests/e2e/playwright-report
+      PLAYWRIGHT_JUNIT_OUTPUT_NAME: /app/tests/e2e/test-results/junit.xml
+    networks:
+      - voyagent_net
+    volumes:
+      # Two mounts: the HTML report dir and the junit/test-results dir.
+      # Both live under /opt/voyagent/test-results/e2e on the host.
+      - /opt/voyagent/test-results/e2e/playwright-report:/app/tests/e2e/playwright-report
+      - /opt/voyagent/test-results/e2e/test-results:/app/tests/e2e/test-results
+    # CMD from the Dockerfile runs `pnpm --filter @voyagent/tests-e2e
+    # test:ci` — no override needed here.

@@ -164,6 +164,98 @@ sudo -u voyagent bash .../deploy.sh --with portals
 Replace the placeholder worker CMD in `Dockerfile.worker` with a real
 entrypoint before relying on it in production.
 
+## Running tests on the host
+
+Every test suite in the repo can be executed on the server using only
+Docker — no host-level Python or Node install is required. A single
+throw-away image per language runs to completion and writes structured
+reports to `/opt/voyagent/test-results/`.
+
+### Suites
+
+| Suite     | What it proves                                                                   | Network   |
+|-----------|----------------------------------------------------------------------------------|-----------|
+| `py-unit` | Pydantic canonical model, drivers (Amadeus/Tally/BSP/VFS), agent runtime, FastAPI chat surface (stubbed), Postgres storage, browser_runner unit tests. | none      |
+| `py-live` | Live HTTP integration tests against the running edge (`tests/live/**`).          | voyagent_net |
+| `e2e`     | Playwright end-to-end tests (`tests/e2e/**`).                                    | voyagent_net |
+
+`py-live` and `e2e` attach to the existing `voyagent_net` bridge as
+an **external** network reference — the prod stack (compose.prod.yml)
+owns that network's lifecycle. Both suites default
+`VOYAGENT_BASE_URL=http://nginx:80`, which is the in-network edge,
+so tests avoid Cloudflare-fronted public flakes. If the prod stack
+isn't running, `run-tests-on-server.sh` fails fast with a message
+telling you to run `deploy.sh` first.
+
+### One-command usage
+
+```bash
+sudo -u voyagent bash /opt/voyagent/repo/infra/deploy/scripts/run-tests-on-server.sh
+```
+
+This:
+
+1. Verifies `voyagent_nginx` is running.
+2. Builds `voyagent-tests-py` and `voyagent-tests-e2e` images.
+3. Runs `py-unit`, then `py-live`, then `e2e` in sequence.
+4. Snapshots every suite's reports into
+   `/opt/voyagent/test-results/<UTC-stamp>/{py-unit,py-live,e2e}/`.
+5. Prints a summary table and exits with the worst suite's exit code.
+
+### Running a single suite
+
+```bash
+sudo -u voyagent bash .../run-tests-on-server.sh --only py-unit
+sudo -u voyagent bash .../run-tests-on-server.sh --only py-live
+sudo -u voyagent bash .../run-tests-on-server.sh --only e2e
+
+# Retry without rebuilding images:
+sudo -u voyagent bash .../run-tests-on-server.sh --only e2e --no-build
+
+# Point live + e2e at the public URL instead of the in-network edge:
+sudo -u voyagent bash .../run-tests-on-server.sh --base-url https://voyagent.globusdemos.com
+
+# Prune stamped result dirs older than 7 days:
+sudo -u voyagent bash .../run-tests-on-server.sh --prune
+```
+
+### Where reports land
+
+```
+/opt/voyagent/test-results/
+├── py-unit/                 # latest run (compose bind mount)
+│   ├── junit.xml
+│   └── report.json
+├── py-live/                 # latest run
+│   ├── junit.xml
+│   └── report.json
+├── e2e/                     # latest run
+│   ├── playwright-report/   # Playwright HTML (open index.html)
+│   └── test-results/
+│       └── junit.xml
+└── 20260414T103000Z/        # one stamped snapshot per run
+    ├── py-unit/{junit.xml,report.json}
+    ├── py-live/{junit.xml,report.json}
+    └── e2e/{playwright-report,test-results}
+```
+
+Copy reports off the box with plain `scp`:
+
+```bash
+scp -r empcloud-development@voyagent.globusdemos.com:/opt/voyagent/test-results/20260414T103000Z ./
+```
+
+### Baseline expectation (live + e2e)
+
+Until real `ANTHROPIC_API_KEY` and `CLERK_SECRET_KEY` land in
+`/opt/voyagent/.env.prod`, the `tests/live` and `tests/e2e` suites pin
+the **error contract**: the chat surface must return `401`/`403`/`503`
+(depending on which secret is missing), **not** a successful turn. This
+is intentional. The tests still pass under that contract — they're
+proving the stack fails *correctly*. Once real keys are wired in, the
+same suites flip to asserting a successful conversational turn without
+any test-code changes.
+
 ## Known limitations
 
 - **Single host, no HA.** A box reboot == downtime until Docker comes

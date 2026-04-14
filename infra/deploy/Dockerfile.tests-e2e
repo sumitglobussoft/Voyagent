@@ -1,0 +1,49 @@
+# syntax=docker/dockerfile:1.7
+#
+# Voyagent Playwright E2E test-runner image — throw-away.
+#
+# Uses Microsoft's official Playwright image which ships Chromium,
+# Firefox, and WebKit with all their OS-level deps preinstalled, so
+# there's no `playwright install` step required at build time.
+#
+# Build arg:
+#   VOYAGENT_VERSION  OCI label version; defaults to 0.0.0-dev.
+
+ARG VOYAGENT_VERSION=0.0.0-dev
+
+FROM mcr.microsoft.com/playwright:v1.49.0-jammy
+
+ARG VOYAGENT_VERSION
+
+LABEL org.opencontainers.image.title="voyagent-tests-e2e" \
+      org.opencontainers.image.source="https://github.com/globusdemos/voyagent" \
+      org.opencontainers.image.version="${VOYAGENT_VERSION}"
+
+ENV CI=1 \
+    VOYAGENT_BASE_URL="https://voyagent.globusdemos.com" \
+    PLAYWRIGHT_HTML_REPORT="/app/tests/e2e/playwright-report" \
+    PLAYWRIGHT_JUNIT_OUTPUT_NAME="/app/tests/e2e/test-results/junit.xml" \
+    PNPM_HOME="/root/.local/share/pnpm" \
+    PATH="/root/.local/share/pnpm:${PATH}"
+
+# Enable corepack-managed pnpm at the exact version the workspace
+# pins. `corepack prepare --activate` writes the shim so subsequent
+# `pnpm` calls don't pay a per-invocation download cost.
+RUN corepack enable \
+ && corepack prepare pnpm@9.12.0 --activate
+
+WORKDIR /app
+
+# Throw-away image — copy the full repo. .dockerignore excludes
+# node_modules and .venv so the context stays small.
+COPY . .
+
+# Top-level workspace install. The pnpm workspace hoists Playwright
+# into tests/e2e/node_modules/ via the @voyagent/tests-e2e package.
+# --frozen-lockfile=false because the parallel agents authoring the
+# E2E tests may still be iterating on the lockfile.
+RUN pnpm install --frozen-lockfile=false
+
+# Default: run the E2E suite with the CI reporter set. Compose
+# services may override this.
+CMD ["pnpm", "--filter", "@voyagent/tests-e2e", "test:ci"]

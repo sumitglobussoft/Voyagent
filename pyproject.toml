@@ -19,6 +19,7 @@ members = [
     "drivers/*",
     "services/*",
     "tests",
+    "tests/live",
 ]
 
 [tool.uv.sources]

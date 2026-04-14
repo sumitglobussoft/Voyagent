@@ -1,0 +1,80 @@
+# syntax=docker/dockerfile:1.7
+#
+# Voyagent Python test-runner image — throw-away, monolithic.
+#
+# Runs every Python test suite in the repo (canonical, drivers,
+# agent_runtime, api, storage, services/browser_runner, live). The
+# same image is reused for `tests-py-unit` and `tests-py-live`; only
+# the command and env differ. Base pinned to match Dockerfile.api so
+# layers can be reused by the Docker daemon cache.
+#
+# Build arg:
+#   VOYAGENT_VERSION  OCI label version; defaults to 0.0.0-dev.
+
+ARG VOYAGENT_VERSION=0.0.0-dev
+
+FROM python:3.12.7-slim-bookworm
+
+ARG VOYAGENT_VERSION
+
+LABEL org.opencontainers.image.title="voyagent-tests-py" \
+      org.opencontainers.image.source="https://github.com/globusdemos/voyagent" \
+      org.opencontainers.image.version="${VOYAGENT_VERSION}"
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1 \
+    UV_PROJECT_ENVIRONMENT=/app/.venv \
+    PATH="/app/.venv/bin:/usr/local/bin:${PATH}" \
+    VOYAGENT_BASE_URL="http://nginx/"
+
+# System deps: libpq5 for asyncpg/psycopg runtime, git for any
+# workspace-member discovery that shells out, curl + ca-certs for the
+# uv installer and general diagnostics inside the container.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      curl \
+      ca-certificates \
+      libpq5 \
+      git \
+ && rm -rf /var/lib/apt/lists/*
+
+# Install uv via the official installer, then expose it system-wide.
+# We deliberately don't copy from ghcr.io/astral-sh/uv here: the task
+# spec calls for the shell installer path so the image is reproducible
+# even on air-gapped mirrors that only proxy astral.sh.
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+ && ln -sf /root/.local/bin/uv  /usr/local/bin/uv \
+ && ln -sf /root/.local/bin/uvx /usr/local/bin/uvx
+
+WORKDIR /app
+
+# Throw-away image: copy the whole repo. Layer caching is not a win
+# for tests — correctness and completeness are. .dockerignore keeps
+# node_modules / .venv / .git out of the context.
+COPY . .
+
+# Full workspace sync (all packages, including dev) then explicit
+# install of the dev-time test tooling so we don't depend on any one
+# package having the right extras wired up.
+RUN uv sync --all-packages \
+ && uv pip install --python /app/.venv/bin/python \
+      pytest \
+      pytest-asyncio \
+      pytest-xdist \
+      pytest-json-report \
+      respx \
+      httpx \
+      aiosqlite \
+      cryptography \
+      lxml
+
+# ENTRYPOINT lets compose services override with arbitrary shell
+# pipelines without having to wrap in `sh -c`.
+ENTRYPOINT ["/bin/bash", "-lc"]
+
+# Default command is a no-op help dump so an accidental `docker run`
+# without a compose service doesn't look like a hang.
+CMD ["pytest --help | head -20"]
