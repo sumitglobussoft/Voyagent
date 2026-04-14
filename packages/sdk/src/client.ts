@@ -61,12 +61,17 @@ export class VoyagentClient {
   // Chat surface.                                                       //
   // ------------------------------------------------------------------- //
 
-  /** POST /chat/sessions — create a new chat session. */
-  async createSession(input: SessionCreateInput): Promise<{ session_id: string }> {
+  /**
+   * POST /chat/sessions — create a new chat session.
+   *
+   * Body is empty — the API derives tenant + actor from the bearer JWT.
+   * The `_input` parameter is kept for signature stability; it is ignored.
+   */
+  async createSession(_input: SessionCreateInput = {}): Promise<{ session_id: string }> {
     return this.#request<{ session_id: string }>("/chat/sessions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(input),
+      body: "{}",
     });
   }
 

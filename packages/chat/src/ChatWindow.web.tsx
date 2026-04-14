@@ -45,10 +45,7 @@ export function ChatWindow(props: ChatWindowProps): ReactElement {
     let cancelled = false;
     (async () => {
       try {
-        const { session_id } = await client.createSession({
-          tenant_id: tenantId,
-          actor_id: actorId,
-        });
+        const { session_id } = await client.createSession();
         if (!cancelled) setSessionId(session_id);
       } catch (err) {
         if (!cancelled) {

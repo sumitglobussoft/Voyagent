@@ -46,11 +46,13 @@ export interface AgentEvent {
   error_message?: string;
 }
 
-/** Request body for `POST /chat/sessions`. */
-export interface SessionCreateInput {
-  tenant_id: string;
-  actor_id: string;
-}
+/**
+ * Request body for `POST /chat/sessions`.
+ *
+ * The API derives tenant + actor from the bearer JWT, so the body is empty.
+ * This alias is kept so call sites can still type the argument.
+ */
+export type SessionCreateInput = Record<string, never>;
 
 /** Pending approval entry returned by `GET /chat/sessions/{id}`. */
 export interface PendingApprovalSummary {
