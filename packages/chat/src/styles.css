@@ -1,0 +1,22 @@
+/* @voyagent/chat — baseline styles.
+ *
+ * Intentionally tiny: the package ships Tailwind utility classes in markup
+ * and assumes the host app has Tailwind configured. This file exists so
+ * consumers who want a zero-config look can `import "@voyagent/chat/styles.css"`
+ * and get a predictable baseline without pulling in Tailwind themselves.
+ */
+
+/* Ensure the chat window fills its parent. */
+.voyagent-chat-host {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+/* Respect prefers-reduced-motion for the auto-scroll animation. */
+@media (prefers-reduced-motion: reduce) {
+  .voyagent-chat-host * {
+    scroll-behavior: auto !important;
+  }
+}

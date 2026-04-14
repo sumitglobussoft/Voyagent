@@ -7,12 +7,21 @@
  * and error handling land here, all auth/tenancy injection is centralized
  * here.
  *
- * v0 surface: `health()` and `moneySchema()`. Streaming helper `streamSSE` is
- * scaffolding for when the agent runtime lands.
+ * v0 surface: `health()`, `moneySchema()`, and the chat triple
+ * (`createSession`, `getSession`, `sendMessage`). `streamSSE` is re-exported
+ * for consumers that want to talk to other SSE endpoints directly.
  */
 export { VoyagentClient } from "./client.js";
 export type { VoyagentClientOptions } from "./client.js";
 export { VoyagentApiError } from "./errors.js";
 export { streamSSE } from "./sse.js";
 export type { SSEEvent } from "./sse.js";
+export type {
+  AgentEvent,
+  AgentEventKind,
+  PendingApprovalSummary,
+  SendMessageInput,
+  SessionCreateInput,
+  SessionSummary,
+} from "./chat.js";
 export type * from "./types.js";

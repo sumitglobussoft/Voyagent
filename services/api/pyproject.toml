@@ -7,7 +7,9 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "pydantic>=2.7",
+    "sse-starlette>=2.1",
     "voyagent-schemas-canonical",
+    "voyagent-agent-runtime",
 ]
 
 [project.scripts]
@@ -22,3 +24,4 @@ packages = ["src/voyagent_api"]
 
 [tool.uv.sources]
 voyagent-schemas-canonical = { workspace = true }
+voyagent-agent-runtime = { workspace = true }

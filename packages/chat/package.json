@@ -1,0 +1,40 @@
+{
+  "name": "@voyagent/chat",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "React chat UI for the Voyagent agent runtime (components, hooks, types).",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./styles.css": "./dist/styles.css"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "tsc --noEmit",
+    "clean": "rimraf dist"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "@voyagent/core": "workspace:*",
+    "@voyagent/sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@voyagent/config": "workspace:*",
+    "@voyagent/core": "workspace:*",
+    "@voyagent/sdk": "workspace:*",
+    "typescript": "^5.6.0",
+    "rimraf": "^6.0.0"
+  }
+}

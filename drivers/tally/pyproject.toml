@@ -1,39 +1,32 @@
 [project]
-name = "voyagent-agent-runtime"
+name = "voyagent-driver-tally"
 version = "0.1.0"
-description = "Voyagent agent orchestrator, domain agents, and tool runtime."
+description = "Voyagent reference driver — Tally Prime via Tally Gateway Server (XML over HTTP)."
 requires-python = ">=3.12"
 dependencies = [
-    "anthropic>=0.40",
+    "httpx>=0.27",
     "pydantic>=2.7",
     "pydantic-settings>=2.4",
-    "httpx>=0.27",
-    "jsonschema>=4.23",
+    "lxml>=5.3",
     "voyagent-schemas-canonical",
     "voyagent-driver-contracts",
-    "voyagent-driver-amadeus",
 ]
-
-[project.scripts]
-voyagent-agent-runtime = "voyagent_agent_runtime.cli:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-# Mirrors the force-include pattern used by drivers/_contracts so the
-# runtime import path stays `voyagent_agent_runtime` regardless of the
-# workspace layout.
+# Mirrors the force-include pattern from drivers/amadeus so that the
+# import path remains `drivers.tally` at runtime (namespace-style).
 [tool.hatch.build.targets.wheel]
 packages = []
 
 [tool.hatch.build.targets.wheel.force-include]
-"src/voyagent_agent_runtime" = "voyagent_agent_runtime"
+"." = "voyagent_driver_tally"
 
 [tool.uv.sources]
 voyagent-schemas-canonical = { workspace = true }
 voyagent-driver-contracts = { workspace = true }
-voyagent-driver-amadeus = { workspace = true }
 
 [tool.uv]
 dev-dependencies = [

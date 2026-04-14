@@ -4,7 +4,14 @@
  * Runtime-agnostic: uses only native `fetch`, no Node-only APIs. Works in
  * browsers, Node 20+, and React Native.
  */
+import type {
+  AgentEvent,
+  SendMessageInput,
+  SessionCreateInput,
+  SessionSummary,
+} from "./chat.js";
 import { VoyagentApiError } from "./errors.js";
+import { streamSSE } from "./sse.js";
 
 export interface VoyagentClientOptions {
   /** Base URL of the Voyagent API, e.g. `http://localhost:8000`. No trailing slash required. */
@@ -35,6 +42,11 @@ export class VoyagentClient {
     this.#authToken = opts.authToken;
   }
 
+  /** The base URL the client was configured with (no trailing slash). */
+  get baseUrl(): string {
+    return this.#baseUrl;
+  }
+
   /** GET /health — liveness probe. */
   async health(): Promise<{ status: "ok" }> {
     return this.#request<{ status: "ok" }>("/health");
@@ -45,22 +57,87 @@ export class VoyagentClient {
     return this.#request<Record<string, unknown>>("/schemas/money");
   }
 
+  // ------------------------------------------------------------------- //
+  // Chat surface.                                                       //
+  // ------------------------------------------------------------------- //
+
+  /** POST /chat/sessions — create a new chat session. */
+  async createSession(input: SessionCreateInput): Promise<{ session_id: string }> {
+    return this.#request<{ session_id: string }>("/chat/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+  }
+
+  /** GET /chat/sessions/{id} — metadata (no message bodies). */
+  async getSession(id: string): Promise<SessionSummary> {
+    return this.#request<SessionSummary>(
+      `/chat/sessions/${encodeURIComponent(id)}`,
+    );
+  }
+
+  /**
+   * POST /chat/sessions/{id}/messages — drive one agent turn as an async
+   * iterable of {@link AgentEvent} objects.
+   *
+   * The returned iterable completes when the server closes the stream (after
+   * a `final`-kind event, or a runtime error, or the client aborting via
+   * `input.signal`). `heartbeat` SSE frames are silently dropped.
+   */
+  async *sendMessage(
+    sessionId: string,
+    input: SendMessageInput,
+  ): AsyncIterable<AgentEvent> {
+    const url = `${this.#baseUrl}/chat/sessions/${encodeURIComponent(sessionId)}/messages`;
+    const headers = await this.#buildHeaders({
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+    });
+
+    const body = JSON.stringify({
+      message: input.message,
+      approvals: input.approvals ?? null,
+    });
+
+    const iter = streamSSE<AgentEvent>(url, {
+      method: "POST",
+      headers,
+      body,
+      signal: input.signal,
+    });
+
+    for await (const ev of iter) {
+      if (ev.event === "heartbeat") continue;
+      if (ev.event !== "agent_event") continue;
+      yield ev.data;
+    }
+  }
+
+  async #buildHeaders(seed: Record<string, string>): Promise<Headers> {
+    const headers = new Headers(seed);
+    if (this.#tenantId) headers.set("X-Voyagent-Tenant", this.#tenantId);
+    if (this.#authToken) {
+      const token =
+        typeof this.#authToken === "function"
+          ? await this.#authToken()
+          : this.#authToken;
+      headers.set("Authorization", `Bearer ${token}`);
+    }
+    return headers;
+  }
+
   async #request<T>(path: string, init?: RequestInit): Promise<T> {
     const method = init?.method ?? "GET";
     const url = `${this.#baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
 
-    const headers = new Headers(init?.headers);
+    const headers = await this.#buildHeaders({});
+    // Merge caller-supplied headers on top.
+    if (init?.headers) {
+      const incoming = new Headers(init.headers);
+      incoming.forEach((value, key) => headers.set(key, value));
+    }
     if (!headers.has("Accept")) headers.set("Accept", "application/json");
-
-    if (this.#tenantId) {
-      headers.set("X-Voyagent-Tenant", this.#tenantId);
-    }
-
-    if (this.#authToken) {
-      const token =
-        typeof this.#authToken === "function" ? await this.#authToken() : this.#authToken;
-      headers.set("Authorization", `Bearer ${token}`);
-    }
 
     const response = await this.#fetch(url, { ...init, method, headers });
 
