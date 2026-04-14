@@ -38,11 +38,14 @@ WORKDIR /app
 # node_modules and .venv so the context stays small.
 COPY . .
 
-# Top-level workspace install. The pnpm workspace hoists Playwright
-# into tests/e2e/node_modules/ via the @voyagent/tests-e2e package.
-# --frozen-lockfile=false because the parallel agents authoring the
-# E2E tests may still be iterating on the lockfile.
-RUN pnpm install --frozen-lockfile=false
+# Install only the tests-e2e package and its transitive deps. A
+# full workspace install drags in apps/web's dev deps (ESLint 9 +
+# typescript-eslint 8) which require a newer Node than the Playwright
+# base ships. `--filter ...` narrows the graph to just what we need,
+# and engine-strict=false makes pnpm forgive the one stray mismatch.
+RUN echo 'engine-strict=false' >> /root/.npmrc \
+ && pnpm --filter "@voyagent/tests-e2e..." install --frozen-lockfile=false \
+      --config.engine-strict=false
 
 # Default: run the E2E suite with the CI reporter set. Compose
 # services may override this.
