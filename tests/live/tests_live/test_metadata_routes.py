@@ -10,7 +10,8 @@ async def test_robots_txt(session: httpx.AsyncClient) -> None:
     await expect_status_in(resp, {200})
     ctype = resp.headers.get("content-type", "").lower()
     assert "text/plain" in ctype, f"unexpected content-type: {ctype!r}"
-    assert "User-agent" in resp.text, "robots.txt missing User-agent"
+    # Next's default robots emitter writes `User-Agent` (capital-A).
+    assert "user-agent" in resp.text.lower(), "robots.txt missing user-agent"
 
 
 async def test_sitemap_xml(session: httpx.AsyncClient) -> None:

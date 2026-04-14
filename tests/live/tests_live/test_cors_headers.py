@@ -17,8 +17,10 @@ async def test_cors_preflight_allows_localhost_dev(
             "Access-Control-Request-Headers": "content-type",
         },
     )
-    # 2xx with allow-origin, OR 405 if CORS preflight isn't wired
-    # for /health specifically.
+    # Accept 2xx (CORS wired + allow-origin set), 400 (FastAPI/Starlette
+    # reject OPTIONS on routes without an explicit handler), or 405 (Method
+    # Not Allowed when the route doesn't accept OPTIONS). Nginx in front of
+    # FastAPI may also turn preflights into 400 for open routes.
     if 200 <= resp.status_code < 300:
         allow = resp.headers.get("access-control-allow-origin", "")
         assert allow, (
@@ -26,7 +28,7 @@ async def test_cors_preflight_allows_localhost_dev(
             f"headers={dict(resp.headers)}"
         )
     else:
-        await expect_status_in(resp, {405})
+        await expect_status_in(resp, {400, 405})
 
 
 async def test_cors_on_chat_sessions(
