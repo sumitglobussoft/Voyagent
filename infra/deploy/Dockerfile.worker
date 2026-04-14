@@ -47,9 +47,7 @@ COPY drivers ./drivers
 COPY services ./services
 COPY tests    ./tests
 
-RUN uv sync --no-dev \
-        --package voyagent-worker \
-        --package voyagent-schemas-canonical
+RUN uv sync --no-dev --all-packages
 
 ##########
 # runner #

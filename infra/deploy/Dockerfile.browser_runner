@@ -47,10 +47,7 @@ COPY drivers ./drivers
 COPY services ./services
 COPY tests    ./tests
 
-RUN uv sync --no-dev \
-        --package voyagent-browser-runner \
-        --package voyagent-schemas-canonical \
-        --package voyagent-driver-contracts
+RUN uv sync --no-dev --all-packages
 
 ##########
 # runner #

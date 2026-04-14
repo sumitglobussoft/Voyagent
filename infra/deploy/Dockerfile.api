@@ -64,13 +64,7 @@ COPY services ./services
 COPY tests    ./tests
 COPY infra    ./infra
 
-RUN uv sync --no-dev \
-        --package voyagent-api \
-        --package voyagent-schemas-canonical \
-        --package voyagent-schemas-storage \
-        --package voyagent-agent-runtime \
-        --package voyagent-driver-contracts \
-        --package voyagent-driver-amadeus \
+RUN uv sync --no-dev --all-packages \
  && uv pip install --python /app/.venv/bin/python alembic
 
 ##########
