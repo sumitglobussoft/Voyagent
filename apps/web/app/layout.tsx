@@ -13,6 +13,12 @@ export const metadata = {
   description: "Agentic operating system for travel agencies.",
 };
 
+// Every page on the authenticated app is tenant-scoped and calls Clerk at
+// request time. Forcing dynamic rendering avoids prerendering during
+// `next build`, which otherwise fails when the Clerk publishable key is
+// not yet injected in the build environment.
+export const dynamic = "force-dynamic";
+
 /**
  * Root layout.
  *
