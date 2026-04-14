@@ -17,6 +17,7 @@ callback and ``on_tool_use`` hook.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
@@ -37,6 +38,97 @@ logger = logging.getLogger(__name__)
 MAX_TOOL_LOOPS = 8
 """Upper bound on tool-use rounds per agent turn. Defensive cap against
 runaway loops when the model re-asks for the same tool indefinitely."""
+
+
+# Retry schedules for upstream Anthropic failures. Expressed as the
+# delays between successive attempts — so RATE_LIMIT_BACKOFF_SECONDS=(1,2)
+# means 3 total attempts (initial + 1s wait + retry + 2s wait + retry).
+# Module constants so tests can monkeypatch to zero-delay without
+# reaching into the retry loop.
+RATE_LIMIT_BACKOFF_SECONDS: tuple[float, ...] = (1.0, 2.0)
+CONNECTION_BACKOFF_SECONDS: tuple[float, ...] = (1.0,)
+
+
+async def _sleep(seconds: float) -> None:
+    """Indirection so tests can patch to a no-op without touching asyncio."""
+    await asyncio.sleep(seconds)
+
+
+def _is_rate_limit_error(exc: BaseException) -> bool:
+    """Best-effort match for ``anthropic.RateLimitError``.
+
+    We avoid importing the SDK at module scope so tests (and environments
+    without the wheel) stay light. We match by MRO name so any subclass
+    the SDK ships — or a test double named ``RateLimitError`` — is
+    caught without the wrapper needing to be changed.
+    """
+    try:
+        import anthropic  # type: ignore[import-not-found]
+
+        if isinstance(exc, anthropic.RateLimitError):
+            return True
+    except Exception:  # noqa: BLE001 — SDK not installed or not this version
+        pass
+    for klass in type(exc).__mro__:
+        if klass.__name__ == "RateLimitError":
+            return True
+    return False
+
+
+def _is_connection_error(exc: BaseException) -> bool:
+    """Best-effort match for ``anthropic.APIConnectionError``."""
+    try:
+        import anthropic  # type: ignore[import-not-found]
+
+        if isinstance(exc, anthropic.APIConnectionError):
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    for klass in type(exc).__mro__:
+        if klass.__name__ == "APIConnectionError":
+            return True
+    return False
+
+
+def _is_permanent_anthropic_error(exc: BaseException) -> bool:
+    """AuthenticationError / BadRequestError — do not retry."""
+    try:
+        import anthropic  # type: ignore[import-not-found]
+
+        permanent = (
+            getattr(anthropic, "AuthenticationError", ()),
+            getattr(anthropic, "BadRequestError", ()),
+        )
+        if any(p for p in permanent if isinstance(exc, p)):
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    for klass in type(exc).__mro__:
+        if klass.__name__ in {"AuthenticationError", "BadRequestError"}:
+            return True
+    return False
+
+
+def _retry_after_seconds(exc: BaseException) -> float | None:
+    """Extract a Retry-After hint from an Anthropic error, if present."""
+    for attr in ("retry_after", "retry_after_seconds"):
+        val = getattr(exc, attr, None)
+        if isinstance(val, (int, float)) and val > 0:
+            return float(val)
+    response = getattr(exc, "response", None)
+    if response is not None:
+        headers = getattr(response, "headers", None)
+        if headers is not None:
+            try:
+                raw = headers.get("retry-after") or headers.get("Retry-After")
+            except Exception:  # noqa: BLE001
+                raw = None
+            if raw is not None:
+                try:
+                    return float(raw)
+                except (TypeError, ValueError):
+                    return None
+    return None
 
 
 ToolRouter = Callable[[str, dict[str, Any], ToolContext], Awaitable[ToolInvocationOutcome]]
@@ -107,30 +199,95 @@ async def run_agent_turn(
 
     for loop_idx in range(MAX_TOOL_LOOPS):
         final_message: Any = None
-        try:
-            async for ev in client.stream_messages(
-                system=system_prompt,
-                messages=messages,
-                tools=tool_defs,
+        stream_exc: BaseException | None = None
+        rate_limit_attempt = 0
+        connection_attempt = 0
+        # Retry upstream transients. We buffer TEXT_DELTA events per
+        # attempt and only yield them once the attempt reaches its
+        # natural end — otherwise a retry after a mid-stream failure
+        # would emit duplicated deltas.
+        while True:
+            buffered_deltas: list[AgentEvent] = []
+            stream_exc = None
+            final_message = None
+            try:
+                async for ev in client.stream_messages(
+                    system=system_prompt,
+                    messages=messages,
+                    tools=tool_defs,
+                ):
+                    delta_text = _extract_text_delta(ev)
+                    if delta_text:
+                        buffered_deltas.append(
+                            AgentEvent(
+                                kind=AgentEventKind.TEXT_DELTA,
+                                session_id=session_id,
+                                turn_id=turn_id,
+                                text=delta_text,
+                            )
+                        )
+                    maybe_stop = _extract_message_stop(ev)
+                    if maybe_stop is not None:
+                        final_message = maybe_stop
+            except Exception as exc:  # noqa: BLE001
+                stream_exc = exc
+
+            if stream_exc is None:
+                for ev in buffered_deltas:
+                    yield ev
+                break
+
+            if _is_permanent_anthropic_error(stream_exc):
+                break
+            if _is_rate_limit_error(stream_exc) and rate_limit_attempt < len(
+                RATE_LIMIT_BACKOFF_SECONDS
             ):
-                delta_text = _extract_text_delta(ev)
-                if delta_text:
-                    yield AgentEvent(
-                        kind=AgentEventKind.TEXT_DELTA,
-                        session_id=session_id,
-                        turn_id=turn_id,
-                        text=delta_text,
-                    )
-                maybe_stop = _extract_message_stop(ev)
-                if maybe_stop is not None:
-                    final_message = maybe_stop
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("anthropic stream failed")
+                hinted = _retry_after_seconds(stream_exc)
+                delay = (
+                    hinted
+                    if hinted is not None
+                    else RATE_LIMIT_BACKOFF_SECONDS[rate_limit_attempt]
+                )
+                rate_limit_attempt += 1
+                logger.warning(
+                    "anthropic rate-limited; retry %d in %.2fs",
+                    rate_limit_attempt,
+                    delay,
+                )
+                await _sleep(delay)
+                continue
+            if _is_connection_error(stream_exc) and connection_attempt < len(
+                CONNECTION_BACKOFF_SECONDS
+            ):
+                delay = CONNECTION_BACKOFF_SECONDS[connection_attempt]
+                connection_attempt += 1
+                logger.warning(
+                    "anthropic connection error; retry %d in %.2fs",
+                    connection_attempt,
+                    delay,
+                )
+                await _sleep(delay)
+                continue
+            break
+
+        if stream_exc is not None:
+            logger.warning(
+                "anthropic stream failed: %s: %s",
+                type(stream_exc).__name__,
+                stream_exc,
+            )
+            if _is_rate_limit_error(stream_exc):
+                msg = (
+                    "model is rate-limited, please try again in a moment "
+                    f"({type(stream_exc).__name__}: {stream_exc})"
+                )
+            else:
+                msg = f"{type(stream_exc).__name__}: {stream_exc}"
             yield AgentEvent(
                 kind=AgentEventKind.ERROR,
                 session_id=session_id,
                 turn_id=turn_id,
-                error_message=f"{type(exc).__name__}: {exc}",
+                error_message=msg,
             )
             return
 

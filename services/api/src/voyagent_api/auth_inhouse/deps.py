@@ -194,6 +194,7 @@ async def get_current_user(
         tenant_id=str(tenant.id),
         tenant_name=tenant.display_name,
         created_at=user.created_at,
+        email_verified=bool(getattr(user, "email_verified", False)),
     )
 
 

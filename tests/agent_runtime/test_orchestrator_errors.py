@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from pydantic import BaseModel
 
 from voyagent_agent_runtime.domain_agents.base import DomainAgentRequest
 from voyagent_agent_runtime.events import AgentEvent, AgentEventKind
@@ -90,20 +91,31 @@ def _register_boom_tool() -> str:
     return name
 
 
+class _FareLike(BaseModel):
+    """Minimal output schema we can attach to a test tool to drive output validation."""
+
+    id: str
+    currency: str
+    price: float
+
+
+_BAD_SHAPE_CALLS: dict[str, int] = {"count": 0}
+
+
 def _register_bad_shape_tool() -> str:
     """Register a tool that returns a dict that does NOT match a Fare shape.
 
-    Production tool specs only describe *input* schemas, so the current
-    runtime happily forwards a garbage dict back to the model. We
-    assert the stricter contract here so the test documents the gap.
+    Production tool specs now carry an optional ``output_schema``; this
+    test-only tool declares one and returns a payload that fails it on
+    every call to exercise the retry-once-then-fail path.
     """
     name = "_test_bad_shape_fare"
     if name in {t.spec.name for t in list_tools()}:
         return name
 
     async def _handler(tool_input: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
-        # Deliberately missing "price" — callers that expect a Fare-like
-        # payload should reject this.
+        _BAD_SHAPE_CALLS["count"] += 1
+        # Deliberately missing "price" — fails _FareLike validation.
         return {"id": "offer-1", "currency": "USD"}
 
     register_tool(
@@ -116,6 +128,7 @@ def _register_bad_shape_tool() -> str:
                 "properties": {},
                 "additionalProperties": False,
             },
+            output_schema=_FareLike,
             side_effect=False,
             reversible=True,
             approval_required=False,
@@ -194,27 +207,21 @@ async def test_domain_tool_raising_driver_error_is_captured_as_audit_and_error(
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Runtime has no output-schema validation or retry path: tools "
-        "may return arbitrary dicts that get forwarded to the model "
-        "verbatim. Once output schemas land this test should flip to "
-        "expect two invocations (one retry) and then a final error."
-    ),
-    strict=False,
-)
 async def test_tool_returning_invalid_shape_is_rejected_and_retried_once(
     tool_context: ToolContext,
 ) -> None:
     tool_name = _register_bad_shape_tool()
     sink = InMemoryAuditSink()
+    _BAD_SHAPE_CALLS["count"] = 0
 
-    # Forward-looking contract: runtime validates output and retries once
-    # before surfacing a hard error outcome. The current implementation
-    # returns ``kind == "success"`` with the bad dict, so this xfails.
     outcome = await invoke_tool(tool_name, {}, tool_context, audit_sink=sink)
     assert outcome.kind == "error"
     assert "price" in (outcome.error_message or "").lower()
+    # Retry-once policy: the handler runs twice before the error surfaces.
+    assert _BAD_SHAPE_CALLS["count"] == 2
+    # Error message uses the agreed tool_output_invalid prefix so the
+    # agent loop can classify this distinctly from driver failures.
+    assert "tool_output_invalid" in (outcome.error_message or "")
 
 
 # --------------------------------------------------------------------------- #
@@ -252,15 +259,19 @@ async def test_rate_limit_error_surfaces_as_final_error_event(
     memory_audit_sink: InMemoryAuditSink,
     make_session,
     driver_registry,
+    monkeypatch,
 ) -> None:
     """An upstream rate-limit must become a user-visible ERROR event and
-    still terminate cleanly with a FINAL.
-
-    NOTE: the current orchestrator does not retry rate-limit errors — see
-    the xfail assertion below for the expected behaviour once backoff
-    lands.
+    still terminate cleanly with a FINAL — after retries are exhausted.
     """
+    from voyagent_agent_runtime import _agent_loop
     from voyagent_agent_runtime.anthropic_client import AnthropicClient, Settings
+
+    # Zero the retry backoff so the suite doesn't wait on real seconds.
+    async def _no_sleep(_s: float) -> None:
+        return None
+
+    monkeypatch.setattr(_agent_loop, "_sleep", _no_sleep)
 
     inner = _RateLimitedClient()
     client = AnthropicClient(Settings(), client=inner)
@@ -284,21 +295,20 @@ async def test_rate_limit_error_surfaces_as_final_error_event(
     )
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Orchestrator does not yet retry Anthropic RateLimitError with "
-        "backoff — it surfaces the first failure immediately. Once a "
-        "retry policy is added this test should see multiple .stream() "
-        "calls before a final ERROR."
-    ),
-    strict=False,
-)
 async def test_rate_limit_error_is_retried_before_surfacing(
     memory_audit_sink: InMemoryAuditSink,
     make_session,
     driver_registry,
+    monkeypatch,
 ) -> None:
+    from voyagent_agent_runtime import _agent_loop
     from voyagent_agent_runtime.anthropic_client import AnthropicClient, Settings
+
+    # Zero-delay the retry backoff so the test runs in millis.
+    async def _no_sleep(_s: float) -> None:
+        return None
+
+    monkeypatch.setattr(_agent_loop, "_sleep", _no_sleep)
 
     inner = _RateLimitedClient()
     client = AnthropicClient(Settings(), client=inner)
@@ -309,8 +319,25 @@ async def test_rate_limit_error_is_retried_before_surfacing(
         handoff_resolver=lambda d: (_ for _ in ()).throw(KeyError(d)),  # pragma: no cover
         driver_registry=driver_registry,
     )
-    await _collect(orchestrator.run_turn(make_session(), "hi"))
+    events = await _collect(orchestrator.run_turn(make_session(), "hi"))
+    expected_attempts = 1 + len(_agent_loop.RATE_LIMIT_BACKOFF_SECONDS)
+    # 1 initial + one retry per configured backoff delay.
+    assert inner.messages.calls == expected_attempts, (
+        f"expected {expected_attempts} attempts, got {inner.messages.calls}"
+    )
     assert inner.messages.calls >= 2
+    # After retries exhaust, an ERROR bubbles up and FINAL closes cleanly.
+    kinds = [ev.kind for ev in events]
+    assert AgentEventKind.ERROR in kinds
+    assert kinds[-1] is AgentEventKind.FINAL
+    rate_msgs = [
+        ev.error_message
+        for ev in events
+        if ev.kind is AgentEventKind.ERROR and ev.error_message
+    ]
+    assert any(
+        "rate-limited" in m.lower() or "rate_limit" in m.lower() for m in rate_msgs
+    )
 
 
 # --------------------------------------------------------------------------- #

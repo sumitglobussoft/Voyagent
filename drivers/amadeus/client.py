@@ -14,6 +14,7 @@ returns the decoded JSON body and delegates to :mod:`mapping`.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import random
 from typing import Any
@@ -22,6 +23,7 @@ import httpx
 
 from drivers._contracts.errors import (
     AuthenticationError,
+    PermanentError,
     RateLimitError,
     TransientError,
     UpstreamTimeoutError,
@@ -133,7 +135,7 @@ class AmadeusClient:
             if response.status_code < 400:
                 if response.status_code == 204 or not response.content:
                     return None
-                return response.json()
+                return _decode_json_or_raise(response, method, path)
 
             error = map_amadeus_error(response)
 
@@ -162,6 +164,37 @@ class AmadeusClient:
             delay = random.uniform(0, delay)
         logger.debug("amadeus: backing off %.2fs before retry #%s", delay, attempts)
         await asyncio.sleep(delay)
+
+
+def _decode_json_or_raise(
+    response: httpx.Response,
+    method: str,
+    path: str,
+) -> Any:
+    """Decode a response body as JSON or raise a mapped :class:`DriverError`.
+
+    Amadeus is contracted to send JSON for all 2xx data responses; a
+    non-JSON body means the edge rewrote the response (captive portal,
+    HTML error page, truncated stream). We treat that as a server
+    protocol violation: a :class:`PermanentError` with the status code
+    and a body preview so debugging isn't a nightmare.
+
+    The same helper is used for non-2xx bodies whose JSON payload fails
+    to decode, so "server sent garbage" always surfaces through one
+    mapped error class, never as a raw :class:`json.JSONDecodeError`.
+    """
+    try:
+        return response.json()
+    except (json.JSONDecodeError, ValueError) as exc:
+        preview = (response.text or "")[:200]
+        raise PermanentError(
+            DRIVER_NAME,
+            (
+                f"Amadeus returned non-JSON body on {method} {path} "
+                f"(HTTP {response.status_code}): {preview!r}"
+            ),
+            vendor_ref=f"HTTP {response.status_code} non-json",
+        ) from exc
 
 
 __all__ = ["AmadeusClient"]

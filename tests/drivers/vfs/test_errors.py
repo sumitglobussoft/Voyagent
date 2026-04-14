@@ -57,20 +57,42 @@ def test_captcha_signals_are_permanent_errors(error_text: str) -> None:
     assert not isinstance(err, TransientError)
 
 
-@pytest.mark.xfail(
-    reason=(
-        "The VFS error-mapping heuristic has no explicit MFA / one-time-"
-        "code branch. 'MFA step required' falls through to the default "
-        "PermanentError, which is the desired outcome, but the more "
-        "realistic message 'two-factor auth prompt appeared' hits the "
-        "'auth' substring branch and becomes AuthenticationError. A "
-        "dedicated MFA heuristic should classify both as PermanentError."
-    ),
-    strict=False,
+@pytest.mark.parametrize(
+    "signal",
+    [
+        "two-factor auth prompt appeared",
+        "2FA challenge required on step 3",
+        "Please enter the OTP sent to your phone",
+        "one-time password required",
+        "MFA verification required",
+        "multi-factor authentication required",
+        "verification code requested",
+    ],
 )
-def test_mfa_signal_maps_to_permanent_error() -> None:
-    err = map_vfs_error("two-factor auth prompt appeared")
+def test_mfa_signal_maps_to_permanent_error(signal: str) -> None:
+    """MFA signals must never be classified as ``AuthenticationError`` —
+    retrying auth with the same credentials won't solve a human-in-the-loop
+    challenge. :class:`PermanentError` kicks it up to human escalation."""
+    err = map_vfs_error(signal)
+    # Exact class, not a subclass that happens to be AuthenticationError.
     assert isinstance(err, PermanentError)
+    assert not isinstance(err, AuthenticationError)
+    assert err.driver == "vfs"
+    # Message must identify this as MFA so humans reading logs know why.
+    assert "MFA" in str(err) or "2FA" in str(err)
+
+
+def test_plain_wrong_password_still_maps_to_authentication_error() -> None:
+    """Regression guard: the MFA heuristic must not swallow plain auth failures.
+
+    A wrong-password error (no MFA keywords) is legitimate
+    :class:`AuthenticationError` territory — the orchestrator can
+    refresh creds and retry. This test pins that behaviour so the MFA
+    branch stays narrow.
+    """
+    err = map_vfs_error("login failed: invalid password")
+    assert isinstance(err, AuthenticationError)
+    assert not isinstance(err, PermanentError)
 
 
 def test_map_vfs_error_attaches_artifacts() -> None:

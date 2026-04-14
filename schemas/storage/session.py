@@ -20,6 +20,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    TIMESTAMP,
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -51,6 +52,25 @@ class ActorKindEnum(str, enum.Enum):
 ACTOR_KIND_SATYPE = SAEnum(
     ActorKindEnum,
     name="actor_kind",
+    values_callable=lambda enum_cls: [m.value for m in enum_cls],
+    create_type=False,
+)
+
+
+class ApprovalStatusEnum(str, enum.Enum):
+    """Mirror of :data:`voyagent_agent_runtime.session.ApprovalStatus`."""
+
+    PENDING = "pending"
+    GRANTED = "granted"
+    REJECTED = "rejected"
+    EXPIRED = "expired"
+
+
+# Matching rationale as ACTOR_KIND_SATYPE: migration owns CREATE TYPE,
+# and we emit the lowercase ``value`` so Postgres accepts it.
+APPROVAL_STATUS_SATYPE = SAEnum(
+    ApprovalStatusEnum,
+    name="approval_status",
     values_callable=lambda enum_cls: [m.value for m in enum_cls],
     create_type=False,
 )
@@ -132,14 +152,27 @@ class PendingApprovalRow(Base):
     requested_at: Mapped[datetime] = mapped_column(nullable=False)
     granted: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     resolved_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # Nullable on the ORM so backfills of old rows don't fail validation;
+    # the alembic migration enforces NOT NULL after the backfill lands.
+    expires_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    status: Mapped[ApprovalStatusEnum] = mapped_column(
+        APPROVAL_STATUS_SATYPE,
+        nullable=False,
+        server_default=ApprovalStatusEnum.PENDING.value,
+    )
 
     __table_args__ = (
         Index("ix_pending_approvals_session", "session_id", "requested_at"),
+        Index("ix_pending_approvals_status_expires", "status", "expires_at"),
     )
 
 
 __all__ = [
     "ActorKindEnum",
+    "ApprovalStatusEnum",
+    "APPROVAL_STATUS_SATYPE",
     "MessageRow",
     "PendingApprovalRow",
     "SessionRow",

@@ -45,6 +45,7 @@ from decimal import Decimal, InvalidOperation
 
 from drivers._contracts.errors import ValidationFailedError
 
+from .airlines import IATA_AIRLINE_CODE_RE, is_known_iata_airline
 from .errors import DRIVER_NAME
 from .haf_records import (
     BFH01FileHeader,
@@ -120,6 +121,34 @@ def _parse_int(raw: str, *, line_number: int, field: str) -> int:
             DRIVER_NAME,
             f"HAF parse error at line {line_number}: field {field!r} is not an integer ({raw!r}).",
         ) from exc
+
+
+def _validate_airline_code(raw: str, *, line_number: int, field: str = "airline_code") -> str:
+    """Validate an IATA 2-char carrier designator.
+
+    Fails the parse if ``raw`` isn't ``^[A-Z0-9]{2}$`` or isn't in the
+    curated allow-list (:mod:`.airlines`). This is the one place
+    column-misalignment bugs tend to surface: a bad offset almost
+    always drops a space or a digit into this slot.
+    """
+    code = raw.strip()
+    if not IATA_AIRLINE_CODE_RE.match(code):
+        raise ValidationFailedError(
+            DRIVER_NAME,
+            (
+                f"HAF parse error at line {line_number}: field {field!r} "
+                f"value {raw!r} is not a valid 2-character IATA airline code."
+            ),
+        )
+    if not is_known_iata_airline(code):
+        raise ValidationFailedError(
+            DRIVER_NAME,
+            (
+                f"HAF parse error at line {line_number}: HAF airline code "
+                f"{code!r} is not a recognized IATA carrier."
+            ),
+        )
+    return code
 
 
 def _parse_date(raw: str, *, line_number: int, field: str) -> date:
@@ -270,7 +299,10 @@ def _parse_bfh01(line: str, line_number: int) -> BFH01FileHeader:
 
 def _parse_bks24(line: str, line_number: int) -> BKS24TicketingRecord:
     ticket = _slice(line, 5, 14, line_number=line_number, field="ticket_number").strip()
-    airline = _slice(line, 19, 2, line_number=line_number, field="airline_code").strip()
+    airline = _validate_airline_code(
+        _slice(line, 19, 2, line_number=line_number, field="airline_code"),
+        line_number=line_number,
+    )
     issue = _parse_date(
         _slice(line, 21, 8, line_number=line_number, field="issue_date"),
         line_number=line_number,
@@ -316,7 +348,10 @@ def _parse_bks24(line: str, line_number: int) -> BKS24TicketingRecord:
 def _parse_bks39(line: str, line_number: int) -> BKS39RefundRecord:
     doc = _slice(line, 5, 14, line_number=line_number, field="document_number").strip()
     original = _slice(line, 19, 14, line_number=line_number, field="original_ticket_number").strip()
-    airline = _slice(line, 33, 2, line_number=line_number, field="airline_code").strip()
+    airline = _validate_airline_code(
+        _slice(line, 33, 2, line_number=line_number, field="airline_code"),
+        line_number=line_number,
+    )
     issue = _parse_date(
         _slice(line, 35, 8, line_number=line_number, field="issue_date"),
         line_number=line_number,
@@ -342,7 +377,10 @@ def _parse_bks39(line: str, line_number: int) -> BKS39RefundRecord:
 def _parse_bks45(line: str, line_number: int) -> BKS45ExchangeRecord:
     new_ticket = _slice(line, 5, 14, line_number=line_number, field="new_ticket_number").strip()
     original = _slice(line, 19, 14, line_number=line_number, field="original_ticket_number").strip()
-    airline = _slice(line, 33, 2, line_number=line_number, field="airline_code").strip()
+    airline = _validate_airline_code(
+        _slice(line, 33, 2, line_number=line_number, field="airline_code"),
+        line_number=line_number,
+    )
     issue = _parse_date(
         _slice(line, 35, 8, line_number=line_number, field="issue_date"),
         line_number=line_number,
@@ -367,7 +405,10 @@ def _parse_bks45(line: str, line_number: int) -> BKS45ExchangeRecord:
 
 def _parse_memo(line: str, line_number: int, is_debit: bool) -> BKS46ADMRecord | BKS47ACMRecord:
     memo = _slice(line, 5, 14, line_number=line_number, field="memo_number").strip()
-    airline = _slice(line, 19, 2, line_number=line_number, field="airline_code").strip()
+    airline = _validate_airline_code(
+        _slice(line, 19, 2, line_number=line_number, field="airline_code"),
+        line_number=line_number,
+    )
     issue = _parse_date(
         _slice(line, 21, 8, line_number=line_number, field="issue_date"),
         line_number=line_number,

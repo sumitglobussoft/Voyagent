@@ -10,17 +10,12 @@ Every endpoint is authenticated and tenant-scoped. Tenant isolation is
 enforced by filtering every query with the ``tenant_id`` taken from the
 caller's verified JWT principal (``AuthenticatedPrincipal.tenant_id``)
 — callers cannot pass a tenant id on the wire.
-
-v0 note: the finance storage tables (invoices, bills, ledger entries)
-do not exist yet. Rather than 500-ing, the finance endpoints return a
-well-formed empty result so dashboards can wire up today and start
-showing real numbers as soon as the invoice / BSP drivers land.
 """
 
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -29,6 +24,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from schemas.storage.invoice import (
+    BillRow,
+    BillStatusEnum,
+    InvoiceRow,
+    InvoiceStatusEnum,
+)
 from schemas.storage.session import MessageRow, SessionRow
 
 from .auth_inhouse.deps import (
@@ -184,6 +185,117 @@ def _tenant_uuid(principal: AuthenticatedPrincipal) -> uuid.UUID:
 # --------------------------------------------------------------------------- #
 
 
+_OPEN_INVOICE_STATUSES = (
+    InvoiceStatusEnum.ISSUED,
+    InvoiceStatusEnum.PARTIALLY_PAID,
+)
+_OPEN_BILL_STATUSES = (
+    BillStatusEnum.RECEIVED,
+    BillStatusEnum.SCHEDULED,
+)
+
+
+def _classify_bucket(due_date: date, today: date) -> str:
+    # Aging is by days past due. A not-yet-due invoice lands in 0-30
+    # along with anything up to 30 days overdue; 31-60 / 61-90 / 90+
+    # follow the usual convention.
+    days_overdue = (today - due_date).days
+    if days_overdue <= 30:
+        return "0-30"
+    if days_overdue <= 60:
+        return "31-60"
+    if days_overdue <= 90:
+        return "61-90"
+    return "90+"
+
+
+def _today() -> date:
+    return datetime.now(timezone.utc).date()
+
+
+def _build_aging(
+    rows: list[tuple[Decimal, Decimal, date, str, str]],
+    *,
+    tenant_id: str,
+    date_from: date,
+    date_to: date,
+    kind: str,
+) -> AgingReportResponse:
+    """Aggregate a list of ``(total, paid, due, currency, party_name)`` rows.
+
+    ``kind`` is ``"debtors"`` or ``"creditors"`` — selects which top-list
+    field to populate. Currency of the response total is the first
+    currency seen (reports typically run per tenant in the tenant's
+    default currency; mixed-currency tenants get the first row's code
+    and numeric totals still balance per-row).
+    """
+    today = _today()
+    buckets: dict[str, dict[str, Any]] = {
+        name: {"count": 0, "amount": Decimal("0.00")}
+        for name in _EMPTY_BUCKETS
+    }
+    totals: dict[str, Decimal] = {}
+    party_totals: dict[tuple[str, str], Decimal] = {}
+    currency = _DEFAULT_CURRENCY
+
+    for total_amount, amount_paid, due_date, ccy, party_name in rows:
+        outstanding = Decimal(total_amount) - Decimal(amount_paid)
+        if outstanding <= Decimal("0.00"):
+            continue
+        bucket = _classify_bucket(due_date, today)
+        buckets[bucket]["count"] += 1
+        buckets[bucket]["amount"] += outstanding
+        totals[ccy] = totals.get(ccy, Decimal("0.00")) + outstanding
+        party_key = (party_name, ccy)
+        party_totals[party_key] = (
+            party_totals.get(party_key, Decimal("0.00")) + outstanding
+        )
+        currency = ccy
+
+    aging = [
+        AgingBucket(
+            bucket=name,
+            count=buckets[name]["count"],
+            amount=MoneyResponse(
+                amount=buckets[name]["amount"].quantize(Decimal("0.01")),
+                currency=currency,
+            ),
+        )
+        for name in _EMPTY_BUCKETS
+    ]
+
+    top = sorted(
+        (
+            PartyAmount(
+                name=name,
+                amount=MoneyResponse(
+                    amount=amt.quantize(Decimal("0.01")),
+                    currency=ccy,
+                ),
+            )
+            for (name, ccy), amt in party_totals.items()
+        ),
+        key=lambda p: p.amount.amount,
+        reverse=True,
+    )[:5]
+
+    total_outstanding = MoneyResponse(
+        amount=totals.get(currency, Decimal("0.00")).quantize(Decimal("0.01")),
+        currency=currency,
+    )
+
+    return AgingReportResponse(
+        tenant_id=tenant_id,
+        period=PeriodResponse.model_validate(
+            {"from": date_from, "to": date_to}
+        ),
+        total_outstanding=total_outstanding,
+        aging_buckets=aging,
+        top_debtors=top if kind == "debtors" else [],
+        top_creditors=top if kind == "creditors" else [],
+    )
+
+
 @router.get(
     "/receivables",
     response_model=AgingReportResponse,
@@ -193,24 +305,39 @@ async def receivables_report(
     date_from: date = Query(..., alias="from"),
     date_to: date = Query(..., alias="to"),
     principal: AuthenticatedPrincipal = Depends(get_current_principal),
-    _session: AsyncSession = Depends(db_session),
+    session: AsyncSession = Depends(db_session),
 ) -> AgingReportResponse:
-    """Aging of unpaid customer invoices.
+    """Aging of open customer invoices within ``[from, to]``.
 
-    Returns empty aggregates until the invoice storage driver lands —
-    there are no ``invoices`` or ``invoice_lines`` tables yet, so
-    aggregating them would be meaningless. The response shape is final
-    so dashboards can bind to it today.
+    Open = ``issued`` or ``partially_paid``. Void / draft / paid rows
+    are excluded. Amounts outstanding are bucketed by days past
+    ``due_date`` relative to today.
     """
     _validate_period(date_from, date_to)
-    return AgingReportResponse(
+    tenant_uuid = _tenant_uuid(principal)
+
+    stmt = (
+        select(
+            InvoiceRow.total_amount,
+            InvoiceRow.amount_paid,
+            InvoiceRow.due_date,
+            InvoiceRow.currency,
+            InvoiceRow.party_name,
+        )
+        .where(InvoiceRow.tenant_id == tenant_uuid)
+        .where(InvoiceRow.status.in_(_OPEN_INVOICE_STATUSES))
+        .where(InvoiceRow.issue_date >= date_from)
+        .where(InvoiceRow.issue_date <= date_to)
+    )
+    result = await session.execute(stmt)
+    rows = [tuple(r) for r in result.all()]
+
+    return _build_aging(
+        rows,
         tenant_id=principal.tenant_id,
-        period=PeriodResponse.model_validate(
-            {"from": date_from, "to": date_to}
-        ),
-        total_outstanding=_zero(),
-        aging_buckets=_empty_buckets(),
-        top_debtors=[],
+        date_from=date_from,
+        date_to=date_to,
+        kind="debtors",
     )
 
 
@@ -228,21 +355,38 @@ async def payables_report(
     date_from: date = Query(..., alias="from"),
     date_to: date = Query(..., alias="to"),
     principal: AuthenticatedPrincipal = Depends(get_current_principal),
-    _session: AsyncSession = Depends(db_session),
+    session: AsyncSession = Depends(db_session),
 ) -> AgingReportResponse:
-    """Aging of unpaid vendor bills (airlines via BSP, hotels, visa agents).
+    """Aging of open vendor bills (airlines via BSP, hotels, visa agents).
 
-    Returns empty aggregates until the bill / BSP storage drivers land.
+    Open = ``received`` or ``scheduled``. Same aging buckets as
+    receivables.
     """
     _validate_period(date_from, date_to)
-    return AgingReportResponse(
+    tenant_uuid = _tenant_uuid(principal)
+
+    stmt = (
+        select(
+            BillRow.total_amount,
+            BillRow.amount_paid,
+            BillRow.due_date,
+            BillRow.currency,
+            BillRow.party_name,
+        )
+        .where(BillRow.tenant_id == tenant_uuid)
+        .where(BillRow.status.in_(_OPEN_BILL_STATUSES))
+        .where(BillRow.issue_date >= date_from)
+        .where(BillRow.issue_date <= date_to)
+    )
+    result = await session.execute(stmt)
+    rows = [tuple(r) for r in result.all()]
+
+    return _build_aging(
+        rows,
         tenant_id=principal.tenant_id,
-        period=PeriodResponse.model_validate(
-            {"from": date_from, "to": date_to}
-        ),
-        total_outstanding=_zero(),
-        aging_buckets=_empty_buckets(),
-        top_creditors=[],
+        date_from=date_from,
+        date_to=date_to,
+        kind="creditors",
     )
 
 

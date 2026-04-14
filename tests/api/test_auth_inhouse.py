@@ -17,6 +17,10 @@ import pytest
 os.environ.setdefault(
     "VOYAGENT_AUTH_SECRET", "test-secret-for-voyagent-tests-32+bytes!"
 )
+# Default to bypassing email verification in the unit-test suite so the
+# sign-up -> sign-in happy path still works end-to-end. Production leaves
+# this unset (i.e. false).
+os.environ.setdefault("VOYAGENT_AUTH_SKIP_EMAIL_VERIFICATION", "true")
 
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy.ext.asyncio import (  # noqa: E402
@@ -30,6 +34,7 @@ from voyagent_api import db as db_module  # noqa: E402
 from voyagent_api.auth_inhouse.passwords import hash_password  # noqa: E402
 from voyagent_api.auth_inhouse.settings import get_auth_settings  # noqa: E402
 from voyagent_api.auth_inhouse.tokens import issue_access_token  # noqa: E402
+from voyagent_api.auth_inhouse import verification as verification_mod  # noqa: E402
 from voyagent_api.main import app  # noqa: E402
 from voyagent_api import revocation  # noqa: E402
 
@@ -52,11 +57,15 @@ async def _fresh_db() -> None:
     # in-memory denylist.
     get_auth_settings.cache_clear()
     revocation.set_revocation_list_for_test(revocation.NullRevocationList())
+    verification_mod.set_verification_token_store_for_test(
+        verification_mod.NullVerificationTokenStore()
+    )
 
     yield
 
     db_module.set_engine_for_test(None)
     revocation.set_revocation_list_for_test(None)
+    verification_mod.set_verification_token_store_for_test(None)
     await engine.dispose()
 
 

@@ -16,6 +16,7 @@ members = [
     "voyagent-driver-bsp-india",
     "voyagent-driver-contracts",
     "voyagent-driver-tally",
+    "voyagent-driver-tbo",
     "voyagent-driver-vfs",
     "voyagent-schemas-canonical",
     "voyagent-schemas-storage",
@@ -2495,6 +2496,41 @@ requires-dist = [
 dev = [
     { name = "pytest", specifier = ">=8.3" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
+    { name = "respx", specifier = ">=0.21" },
+]
+
+[[package]]
+name = "voyagent-driver-tbo"
+version = "0.1.0"
+source = { editable = "drivers/tbo" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "voyagent-driver-contracts" },
+    { name = "voyagent-schemas-canonical" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "respx" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pydantic", specifier = ">=2.7" },
+    { name = "pydantic-settings", specifier = ">=2.4" },
+    { name = "voyagent-driver-contracts", editable = "drivers/_contracts" },
+    { name = "voyagent-schemas-canonical", editable = "schemas/canonical" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.2" },
+    { name = "pytest-asyncio", specifier = ">=0.23" },
     { name = "respx", specifier = ">=0.21" },
 ]
 

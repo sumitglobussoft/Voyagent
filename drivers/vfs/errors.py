@@ -23,8 +23,32 @@ from drivers._contracts.errors import (
 DRIVER_NAME = "vfs"
 
 
+# Signals that unambiguously mean "the portal wants a human to type a
+# one-time code". These must be classified BEFORE the generic "auth"
+# substring check, because "two-factor auth" would otherwise be swept
+# into AuthenticationError and the orchestrator would retry with the
+# same dead-end credentials. Keep these lowercase; the classifier
+# lowercases the input before comparing.
+_MFA_SIGNALS: tuple[str, ...] = (
+    "two-factor",
+    "two factor",
+    "2fa",
+    "mfa",
+    "multi-factor",
+    "multi factor",
+    "otp",
+    "one-time password",
+    "one time password",
+    "verification code",
+)
+
+
 def _lower(s: str | None) -> str:
     return (s or "").lower()
+
+
+def _is_mfa_signal(low: str) -> bool:
+    return any(sig in low for sig in _MFA_SIGNALS)
 
 
 def map_vfs_error(
@@ -37,6 +61,19 @@ def map_vfs_error(
     Heuristics only — the runner does not expose structured error
     codes yet. ``artifact_uris`` are stitched into ``vendor_ref`` so
     the failure artifacts travel with the exception.
+
+    Ordering matters:
+
+    1. timeouts — structurally distinct, never overlap with auth;
+    2. MFA / 2FA / OTP signals — always :class:`PermanentError`, even
+       when the string also contains the word ``auth``. Checked
+       before CAPTCHA and before the generic auth substring so that
+       "two-factor auth prompt" can't leak into
+       :class:`AuthenticationError`;
+    3. CAPTCHA — :class:`PermanentError`, likewise human-only;
+    4. generic auth / login / password — :class:`AuthenticationError`
+       (retry with refreshed credentials is legitimate here);
+    5. the rest of the heuristics follow.
     """
     msg = error or "unknown VFS failure"
     artifacts = ", ".join(artifact_uris or [])
@@ -48,6 +85,12 @@ def map_vfs_error(
         return UpstreamTimeoutError(DRIVER_NAME, msg, vendor_ref=vendor_ref)
     if "deadline_exceeded" in low:
         return UpstreamTimeoutError(DRIVER_NAME, msg, vendor_ref=vendor_ref)
+    if _is_mfa_signal(low):
+        return PermanentError(
+            DRIVER_NAME,
+            f"VFS portal requires MFA/2FA human intervention: {msg}",
+            vendor_ref=vendor_ref,
+        )
     if "captcha" in low:
         return PermanentError(DRIVER_NAME, "CAPTCHA challenge encountered.", vendor_ref=vendor_ref)
     if "login" in low or "auth" in low or "unauthorized" in low or "password" in low:

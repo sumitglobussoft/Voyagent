@@ -18,7 +18,7 @@ from decimal import Decimal
 from typing import Any, Awaitable, Callable, Literal, Protocol
 
 import jsonschema
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from drivers._contracts.errors import CapabilityNotSupportedError, DriverError
 from drivers._contracts.fare_search import FareSearchCriteria
@@ -66,6 +66,10 @@ class ToolSpec(BaseModel):
     input_schema: dict[str, Any] = Field(
         description="JSON Schema (draft 2020-12) describing tool input."
     )
+    # Optional Pydantic model used to validate the handler's *return*
+    # value. When set, invoke_tool rejects non-matching output and drives
+    # a single retry before surfacing a permanent tool_output_invalid.
+    output_schema: type[BaseModel] | None = None
     side_effect: bool = False
     reversible: bool = True
     approval_required: bool = False
@@ -186,6 +190,7 @@ def tool(
     domain: ToolDomain,
     input_schema: dict[str, Any] | None = None,
     input_model: type[BaseModel] | None = None,
+    output_schema: type[BaseModel] | None = None,
     side_effect: bool = False,
     reversible: bool = True,
     approval_required: bool = False,
@@ -207,6 +212,7 @@ def tool(
             name=name,
             description=description,
             input_schema=schema,
+            output_schema=output_schema,
             side_effect=side_effect,
             reversible=reversible,
             approval_required=approval_required,
@@ -444,8 +450,43 @@ async def invoke_tool(
         await audit_sink.write(audit)
         audit_id = audit.id
 
+    # Execute with a one-shot retry when the spec declares an
+    # output_schema and the first call returns a non-matching dict. The
+    # retry uses the same audit row: a rejected shape is a transient
+    # handler failure, not a new logical call.
+    async def _invoke_handler_once() -> dict[str, Any]:
+        return await _run_handler(entry.handler, tool_input, ctx)
+
+    validation_attempts = 0
+    max_validation_attempts = 2 if spec.output_schema is not None else 1
+    last_validation_error: str | None = None
+
     try:
-        output = await _run_handler(entry.handler, tool_input, ctx)
+        while True:
+            validation_attempts += 1
+            output = await _invoke_handler_once()
+            if spec.output_schema is None:
+                break
+            try:
+                spec.output_schema.model_validate(output)
+                last_validation_error = None
+                break
+            except ValidationError as verr:
+                last_validation_error = str(verr)
+                logger.warning(
+                    "tool %s output failed %s validation (attempt %d/%d)",
+                    name,
+                    spec.output_schema.__name__,
+                    validation_attempts,
+                    max_validation_attempts,
+                )
+                if validation_attempts >= max_validation_attempts:
+                    break
+                # Nudge the handler via ctx.extensions so a retry-aware
+                # handler can shape a better payload. The machinery works
+                # even for handlers that ignore it.
+                ctx.extensions["_last_output_validation_error"] = last_validation_error
+                continue
     except DriverError as exc:
         logger.warning("tool %s driver error: %s", name, exc.message)
         if audit is not None:
@@ -468,6 +509,25 @@ async def invoke_tool(
         return ToolInvocationOutcome(
             kind="error",
             error_message=f"{type(exc).__name__}: {exc}",
+            audit_id=audit_id,
+        )
+
+    if last_validation_error is not None:
+        # Both attempts produced output that failed schema validation.
+        # Surface this as a regular tool-failure outcome so the agent
+        # loop forwards an ``is_error`` tool_result to the model.
+        if audit is not None:
+            audit.status = AuditStatus.FAILED
+            audit.error = f"tool_output_invalid: {last_validation_error}"
+            audit.completed_at = datetime.now(timezone.utc)
+            await audit_sink.write(audit)
+        return ToolInvocationOutcome(
+            kind="error",
+            error_message=(
+                f"tool_output_invalid: {name!r} returned a payload that did "
+                f"not match {spec.output_schema.__name__!r} after "
+                f"{validation_attempts} attempt(s): {last_validation_error}"
+            ),
             audit_id=audit_id,
         )
 

@@ -30,12 +30,18 @@ from .settings import get_auth_settings
 from .tokens import (
     AccessTokenPayload,
     EmailAlreadyRegisteredError,
+    EmailNotVerifiedError,
     InvalidCredentialsError,
     InvalidTokenError,
+    InvalidVerificationTokenError,
     RefreshTokenRevokedError,
     hash_refresh_token,
     issue_access_token,
     mint_refresh_token,
+)
+from .verification import (
+    build_verification_token_store,
+    get_verification_ttl_seconds,
 )
 
 logger = logging.getLogger(__name__)
@@ -96,6 +102,7 @@ class AuthService:
             tenant_id=str(tenant.id),
             tenant_name=tenant.display_name,
             created_at=user.created_at,
+            email_verified=bool(getattr(user, "email_verified", False)),
         )
 
     # ------------------------------------------------------------------ #
@@ -152,6 +159,12 @@ class AuthService:
 
         if not verify_password(user.password_hash, req.password):
             raise InvalidCredentialsError("invalid_credentials")
+
+        # Block sign-in for unverified users with a distinct error code so
+        # clients can branch into a "please verify" UX without having to
+        # distinguish it from a wrong-password 401 by string-matching.
+        if not bool(getattr(user, "email_verified", False)):
+            raise EmailNotVerifiedError("email_not_verified")
 
         tenant = await self._users.find_tenant(user.tenant_id)
         if tenant is None:
@@ -234,7 +247,14 @@ class AuthService:
     # ------------------------------------------------------------------ #
 
     async def me(self, access_payload: AccessTokenPayload) -> PublicUser:
-        """Return the :class:`PublicUser` for an authenticated principal."""
+        """Return the :class:`PublicUser` for an authenticated principal.
+
+        An unverified user still sees their own ``/me`` — the client
+        reads ``email_verified`` off the payload and renders a "please
+        verify" banner. Revoking the access token on the server would
+        force the user to the login screen where the bounced sign-in
+        couldn't explain itself.
+        """
         try:
             user_uuid = uuid.UUID(access_payload.sub)
         except ValueError as exc:
@@ -247,6 +267,41 @@ class AuthService:
         if tenant is None:
             raise InvalidTokenError("tenant_not_found")
         return self._public_user(user, tenant)
+
+    # ------------------------------------------------------------------ #
+    # Email verification                                                 #
+    # ------------------------------------------------------------------ #
+
+    async def send_verification_email(
+        self, access_payload: AccessTokenPayload
+    ) -> str:
+        """Mint + persist a verification token; returns the plain token."""
+        try:
+            user_uuid = uuid.UUID(access_payload.sub)
+        except ValueError as exc:
+            raise InvalidTokenError("malformed_subject") from exc
+
+        user = await self._users.find_by_id(user_uuid)
+        if user is None:
+            raise InvalidTokenError("user_not_found")
+
+        token = uuid.uuid4().hex
+        ttl = get_verification_ttl_seconds()
+        store = build_verification_token_store()
+        await store.put(token, str(user.id), ttl)
+        return token
+
+    async def verify_email(self, token: str) -> None:
+        """Consume ``token`` and flip ``email_verified`` on the user."""
+        store = build_verification_token_store()
+        user_id_str = await store.take(token)
+        if user_id_str is None:
+            raise InvalidVerificationTokenError("token_invalid")
+        try:
+            user_uuid = uuid.UUID(user_id_str)
+        except ValueError as exc:
+            raise InvalidVerificationTokenError("token_invalid") from exc
+        await self._users.mark_email_verified(user_uuid)
 
 
 __all__ = ["AuthService"]

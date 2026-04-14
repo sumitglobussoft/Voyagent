@@ -25,6 +25,10 @@ import pytest
 os.environ.setdefault(
     "VOYAGENT_AUTH_SECRET", "test-secret-for-voyagent-tests-32+bytes!"
 )
+# Default to bypassing email verification; individual tests flip the
+# User row back to ``email_verified=False`` when they need to exercise
+# the verification gate.
+os.environ.setdefault("VOYAGENT_AUTH_SKIP_EMAIL_VERIFICATION", "true")
 
 import jwt  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -38,6 +42,7 @@ from schemas.storage import Base, RefreshTokenRow, User  # noqa: E402
 
 from voyagent_api import db as db_module  # noqa: E402
 from voyagent_api import revocation  # noqa: E402
+from voyagent_api.auth_inhouse import verification as verification_mod  # noqa: E402
 from voyagent_api.auth_inhouse.settings import get_auth_settings  # noqa: E402
 from voyagent_api.auth_inhouse.tokens import hash_refresh_token  # noqa: E402
 from voyagent_api.main import app  # noqa: E402
@@ -58,11 +63,15 @@ async def _fresh_db():
 
     get_auth_settings.cache_clear()
     revocation.set_revocation_list_for_test(revocation.NullRevocationList())
+    verification_mod.set_verification_token_store_for_test(
+        verification_mod.NullVerificationTokenStore()
+    )
 
     yield sm
 
     db_module.set_engine_for_test(None)
     revocation.set_revocation_list_for_test(None)
+    verification_mod.set_verification_token_store_for_test(None)
     await engine.dispose()
 
 
@@ -109,21 +118,14 @@ def test_sign_up_with_invalid_email_returns_422(client: TestClient) -> None:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xfail(
-    reason=(
-        "The ``email_verified`` column exists on the User row but the "
-        "sign-in service does not currently gate on it, so a disabled / "
-        "unverified user can still sign in. Once AuthService.sign_in "
-        "enforces the flag this test should pass."
-    ),
-    strict=False,
-)
 async def test_sign_in_with_unverified_user_is_rejected(
     client: TestClient, _fresh_db
 ) -> None:
     client.post("/auth/sign-up", json=_SIGNUP_BODY)
 
-    # Force the user into an unverified state directly on the DB.
+    # Force the user into an unverified state directly on the DB — the
+    # test-suite bypass env var auto-verifies on sign-up, but the
+    # verification gate is what we're exercising here.
     sm = _fresh_db
     async with sm() as session:
         await session.execute(
@@ -138,6 +140,125 @@ async def test_sign_in_with_unverified_user_is_rejected(
         json={"email": "alice@example.com", "password": _VALID_PASSWORD},
     )
     assert r.status_code == 401
+    assert r.json()["detail"] == "email_not_verified"
+
+
+async def test_sign_in_with_wrong_password_is_rejected_distinguishably(
+    client: TestClient, _fresh_db
+) -> None:
+    """The two 401 paths must be distinguishable by detail code."""
+    client.post("/auth/sign-up", json=_SIGNUP_BODY)
+
+    # Force unverified so we can hit the verification gate too.
+    sm = _fresh_db
+    async with sm() as session:
+        await session.execute(
+            update(User)
+            .where(User.email == "alice@example.com")
+            .values(email_verified=False)
+        )
+        await session.commit()
+
+    unverified = client.post(
+        "/auth/sign-in",
+        json={"email": "alice@example.com", "password": _VALID_PASSWORD},
+    )
+    wrong_pw = client.post(
+        "/auth/sign-in",
+        json={"email": "alice@example.com", "password": "TotallyWrong123"},
+    )
+
+    assert unverified.status_code == 401
+    assert wrong_pw.status_code == 401
+    assert unverified.json()["detail"] == "email_not_verified"
+    assert wrong_pw.json()["detail"] == "invalid_credentials"
+    assert unverified.json()["detail"] != wrong_pw.json()["detail"]
+
+
+async def test_send_and_verify_email_flow(
+    client: TestClient, _fresh_db
+) -> None:
+    """Full sign-up -> unverified -> send -> verify -> sign-in flow."""
+    signup = client.post("/auth/sign-up", json=_SIGNUP_BODY).json()
+    access = signup["access_token"]
+
+    # Force the user to the unverified state.
+    sm = _fresh_db
+    async with sm() as session:
+        await session.execute(
+            update(User)
+            .where(User.email == "alice@example.com")
+            .values(email_verified=False)
+        )
+        await session.commit()
+
+    blocked = client.post(
+        "/auth/sign-in",
+        json={"email": "alice@example.com", "password": _VALID_PASSWORD},
+    )
+    assert blocked.status_code == 401
+    assert blocked.json()["detail"] == "email_not_verified"
+
+    r = client.post(
+        "/auth/send-verification-email",
+        headers={"Authorization": f"Bearer {access}"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json() == {"queued": True}
+
+    # Pull the token out of the in-memory store. The singleton is the
+    # same instance the route just wrote to.
+    store = verification_mod.build_verification_token_store()
+    assert isinstance(store, verification_mod.NullVerificationTokenStore)
+    # Exactly one token should be outstanding for the flow.
+    tokens = list(store._tokens.keys())  # type: ignore[attr-defined]
+    assert len(tokens) == 1
+    token = tokens[0]
+
+    r = client.post("/auth/verify-email", json={"token": token})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"verified": True}
+
+    # Token must be single-use.
+    replay = client.post("/auth/verify-email", json={"token": token})
+    assert replay.status_code == 400
+    assert replay.json()["detail"] == "token_invalid"
+
+    ok = client.post(
+        "/auth/sign-in",
+        json={"email": "alice@example.com", "password": _VALID_PASSWORD},
+    )
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["user"]["email_verified"] is True
+
+
+async def test_verify_email_with_expired_token(
+    client: TestClient, _fresh_db
+) -> None:
+    """A token past its TTL must be rejected with ``token_invalid``."""
+    import time as _time
+
+    signup = client.post("/auth/sign-up", json=_SIGNUP_BODY).json()
+    access = signup["access_token"]
+
+    r = client.post(
+        "/auth/send-verification-email",
+        headers={"Authorization": f"Bearer {access}"},
+    )
+    assert r.status_code == 200
+
+    store = verification_mod.build_verification_token_store()
+    tokens = list(store._tokens.keys())  # type: ignore[attr-defined]
+    assert len(tokens) == 1
+    token = tokens[0]
+
+    # Fast-forward the row's expiry into the past.
+    user_id, _exp = store._tokens[token]  # type: ignore[attr-defined]
+    store._tokens[token] = (user_id, int(_time.time()) - 1)  # type: ignore[attr-defined]
+
+    r = client.post("/auth/verify-email", json={"token": token})
+    assert r.status_code == 400
+    assert r.json()["detail"] == "token_invalid"
 
 
 # --------------------------------------------------------------------------- #

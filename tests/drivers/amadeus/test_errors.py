@@ -118,15 +118,6 @@ async def test_search_418_maps_to_generic_permanent_error_not_raw_httperror(
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xfail(
-    reason=(
-        "AmadeusClient._request calls ``response.json()`` on any 2xx body "
-        "with content and lets ``json.JSONDecodeError`` propagate. A "
-        "parser-specific DriverError subclass (e.g. ValidationFailedError "
-        "with a 'non-json body' message) should replace the raw exception."
-    ),
-    strict=False,
-)
 @respx.mock
 async def test_search_200_with_malformed_body_raises_driver_error(
     amadeus_driver: AmadeusDriver,
@@ -140,5 +131,34 @@ async def test_search_200_with_malformed_body_raises_driver_error(
         return_value=httpx.Response(200, content=b"not-json-at-all <html>")
     )
 
-    with pytest.raises((ValidationFailedError, PermanentError, DriverError)):
+    with pytest.raises(PermanentError) as exc:
         await amadeus_driver.search(_criteria())
+    # Driver-hierarchy exception, not raw json.JSONDecodeError.
+    assert isinstance(exc.value, DriverError)
+    # Status code is preserved in the message / vendor_ref for debugging.
+    assert "200" in str(exc.value) or "200" in (exc.value.vendor_ref or "")
+    # Body preview is included so operators can triage without a capture.
+    assert "not-json" in str(exc.value)
+
+
+# --------------------------------------------------------------------------- #
+# Negative: a well-formed 200 still works                                     #
+# --------------------------------------------------------------------------- #
+
+
+@respx.mock
+async def test_search_200_with_valid_json_still_parses(
+    amadeus_driver: AmadeusDriver,
+    sample_token_response: dict,
+) -> None:
+    """Regression guard: the JSON-decode guard must not break valid 2xx bodies."""
+    base = amadeus_driver._config.api_base.rstrip("/")
+    respx.post(f"{base}/v1/security/oauth2/token").mock(
+        return_value=httpx.Response(200, json=sample_token_response)
+    )
+    respx.get(f"{base}/v2/shopping/flight-offers").mock(
+        return_value=httpx.Response(200, json={"data": [], "meta": {"count": 0}})
+    )
+    # No exception; empty offers is a legitimate result shape.
+    result = await amadeus_driver.search(_criteria())
+    assert result == [] or result is not None

@@ -92,6 +92,25 @@ class PublicUser(BaseModel):
     tenant_id: str
     tenant_name: str
     created_at: datetime
+    email_verified: bool = False
+
+
+class VerifyEmailRequest(BaseModel):
+    """Body for ``POST /auth/verify-email``."""
+
+    token: str = Field(min_length=1, max_length=128)
+
+
+class SendVerificationEmailResponse(BaseModel):
+    """Body returned by ``POST /auth/send-verification-email``."""
+
+    queued: bool
+
+
+class VerifyEmailResponse(BaseModel):
+    """Body returned by ``POST /auth/verify-email``."""
+
+    verified: bool
 
 
 class AuthResponse(BaseModel):
@@ -115,8 +134,11 @@ __all__ = [
     "AuthResponse",
     "PublicUser",
     "RefreshRequest",
+    "SendVerificationEmailResponse",
     "SignInRequest",
     "SignOutRequest",
     "SignUpRequest",
     "TokenPairResponse",
+    "VerifyEmailRequest",
+    "VerifyEmailResponse",
 ]

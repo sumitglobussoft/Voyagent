@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 
 import pytest
 
@@ -25,6 +26,12 @@ from sqlalchemy.ext.asyncio import (  # noqa: E402
 )
 
 from schemas.storage import Base  # noqa: E402
+from schemas.storage.invoice import (  # noqa: E402
+    BillRow,
+    BillStatusEnum,
+    InvoiceRow,
+    InvoiceStatusEnum,
+)
 from schemas.storage.session import (  # noqa: E402
     ActorKindEnum,
     MessageRow,
@@ -210,6 +217,295 @@ def test_malformed_date_rejects_with_422(client: TestClient) -> None:
         headers={"Authorization": f"Bearer {access}"},
     )
     assert r.status_code == 422
+
+
+# --------------------------------------------------------------------------- #
+# Receivables / payables — real data                                          #
+# --------------------------------------------------------------------------- #
+
+
+async def _insert_invoice(
+    *,
+    tenant_id: str,
+    number: str,
+    party_name: str,
+    issue_date: date,
+    due_date: date,
+    total_amount: Decimal,
+    currency: str = "INR",
+    amount_paid: Decimal = Decimal("0.00"),
+    status: InvoiceStatusEnum = InvoiceStatusEnum.ISSUED,
+) -> uuid.UUID:
+    sm = db_module.get_sessionmaker()
+    async with sm() as s:
+        row = InvoiceRow(
+            tenant_id=uuid.UUID(tenant_id),
+            number=number,
+            party_name=party_name,
+            issue_date=issue_date,
+            due_date=due_date,
+            total_amount=total_amount,
+            currency=currency,
+            amount_paid=amount_paid,
+            status=status,
+        )
+        s.add(row)
+        await s.commit()
+        return row.id
+
+
+async def _insert_bill(
+    *,
+    tenant_id: str,
+    number: str,
+    vendor_reference: str,
+    party_name: str,
+    issue_date: date,
+    due_date: date,
+    total_amount: Decimal,
+    currency: str = "INR",
+    amount_paid: Decimal = Decimal("0.00"),
+    status: BillStatusEnum = BillStatusEnum.RECEIVED,
+) -> uuid.UUID:
+    sm = db_module.get_sessionmaker()
+    async with sm() as s:
+        row = BillRow(
+            tenant_id=uuid.UUID(tenant_id),
+            number=number,
+            vendor_reference=vendor_reference,
+            party_name=party_name,
+            issue_date=issue_date,
+            due_date=due_date,
+            total_amount=total_amount,
+            currency=currency,
+            amount_paid=amount_paid,
+            status=status,
+        )
+        s.add(row)
+        await s.commit()
+        return row.id
+
+
+async def test_receivables_real_data_tenant_isolation(
+    client: TestClient,
+) -> None:
+    a = _sign_up(client, email="alice@a.com", agency="Tenant A")
+    b = _sign_up(client, email="bob@b.com", agency="Tenant B")
+
+    today = datetime.now(timezone.utc).date()
+
+    # Tenant A: one 15 days past due (0-30 bucket), one 45 days (31-60).
+    await _insert_invoice(
+        tenant_id=a["user"]["tenant_id"],
+        number="A-001",
+        party_name="Acme Corp",
+        issue_date=today - timedelta(days=20),
+        due_date=today - timedelta(days=15),
+        total_amount=Decimal("1000.00"),
+    )
+    await _insert_invoice(
+        tenant_id=a["user"]["tenant_id"],
+        number="A-002",
+        party_name="Beta LLC",
+        issue_date=today - timedelta(days=50),
+        due_date=today - timedelta(days=45),
+        total_amount=Decimal("500.50"),
+    )
+    # Tenant B owns its own invoice — Tenant A must not see it.
+    await _insert_invoice(
+        tenant_id=b["user"]["tenant_id"],
+        number="B-001",
+        party_name="Gamma Inc",
+        issue_date=today - timedelta(days=5),
+        due_date=today + timedelta(days=10),
+        total_amount=Decimal("9999.99"),
+    )
+
+    window_from = (today - timedelta(days=90)).isoformat()
+    window_to = (today + timedelta(days=1)).isoformat()
+
+    r_a = client.get(
+        f"/reports/receivables?from={window_from}&to={window_to}",
+        headers={"Authorization": f"Bearer {a['access_token']}"},
+    )
+    assert r_a.status_code == 200, r_a.text
+    body = r_a.json()
+    buckets = {b["bucket"]: b for b in body["aging_buckets"]}
+    assert buckets["0-30"]["count"] == 1
+    assert buckets["0-30"]["amount"]["amount"] == "1000.00"
+    assert buckets["0-30"]["amount"]["currency"] == "INR"
+    assert buckets["31-60"]["count"] == 1
+    assert buckets["31-60"]["amount"]["amount"] == "500.50"
+    assert buckets["61-90"]["count"] == 0
+    assert buckets["90+"]["count"] == 0
+    assert body["total_outstanding"]["amount"] == "1500.50"
+    # top_debtors populated, ordered by outstanding desc
+    assert body["top_debtors"][0]["name"] == "Acme Corp"
+    assert body["top_debtors"][0]["amount"]["amount"] == "1000.00"
+
+    # Tenant B sees only its own invoice — not Tenant A's.
+    r_b = client.get(
+        f"/reports/receivables?from={window_from}&to={window_to}",
+        headers={"Authorization": f"Bearer {b['access_token']}"},
+    )
+    body_b = r_b.json()
+    assert r_b.status_code == 200
+    b_buckets = {x["bucket"]: x for x in body_b["aging_buckets"]}
+    # Gamma Inc's invoice isn't yet due — goes to 0-30 bucket.
+    assert b_buckets["0-30"]["count"] == 1
+    assert b_buckets["0-30"]["amount"]["amount"] == "9999.99"
+    # No Tenant A leakage:
+    assert b_buckets["31-60"]["count"] == 0
+
+
+async def test_payables_real_data_tenant_isolation(
+    client: TestClient,
+) -> None:
+    a = _sign_up(client, email="alice@a.com", agency="Tenant A")
+    b = _sign_up(client, email="bob@b.com", agency="Tenant B")
+
+    today = datetime.now(timezone.utc).date()
+
+    await _insert_bill(
+        tenant_id=a["user"]["tenant_id"],
+        number="BILL-A-001",
+        vendor_reference="BSP-A-001",
+        party_name="IATA BSP India",
+        issue_date=today - timedelta(days=20),
+        due_date=today - timedelta(days=15),
+        total_amount=Decimal("2000.00"),
+    )
+    await _insert_bill(
+        tenant_id=a["user"]["tenant_id"],
+        number="BILL-A-002",
+        vendor_reference="HB-A-002",
+        party_name="Hotelbeds",
+        issue_date=today - timedelta(days=50),
+        due_date=today - timedelta(days=45),
+        total_amount=Decimal("750.00"),
+        status=BillStatusEnum.SCHEDULED,
+    )
+    await _insert_bill(
+        tenant_id=b["user"]["tenant_id"],
+        number="BILL-B-001",
+        vendor_reference="BSP-B-001",
+        party_name="IATA BSP India",
+        issue_date=today - timedelta(days=5),
+        due_date=today + timedelta(days=10),
+        total_amount=Decimal("1234.56"),
+    )
+
+    window_from = (today - timedelta(days=90)).isoformat()
+    window_to = (today + timedelta(days=1)).isoformat()
+
+    r_a = client.get(
+        f"/reports/payables?from={window_from}&to={window_to}",
+        headers={"Authorization": f"Bearer {a['access_token']}"},
+    )
+    assert r_a.status_code == 200, r_a.text
+    body = r_a.json()
+    buckets = {b["bucket"]: b for b in body["aging_buckets"]}
+    assert buckets["0-30"]["count"] == 1
+    assert buckets["0-30"]["amount"]["amount"] == "2000.00"
+    assert buckets["31-60"]["count"] == 1
+    assert buckets["31-60"]["amount"]["amount"] == "750.00"
+    assert body["total_outstanding"]["amount"] == "2750.00"
+    assert body["top_creditors"][0]["name"] == "IATA BSP India"
+    # Tenant A must not see Tenant B's creditors list.
+    assert all(
+        c["amount"]["amount"] != "1234.56" for c in body["top_creditors"]
+    )
+
+    r_b = client.get(
+        f"/reports/payables?from={window_from}&to={window_to}",
+        headers={"Authorization": f"Bearer {b['access_token']}"},
+    )
+    body_b = r_b.json()
+    assert r_b.status_code == 200
+    b_buckets = {x["bucket"]: x for x in body_b["aging_buckets"]}
+    assert b_buckets["0-30"]["count"] == 1
+    assert b_buckets["31-60"]["count"] == 0
+
+
+async def test_receivables_excludes_void_invoices(client: TestClient) -> None:
+    signup = _sign_up(client, email="alice@a.com", agency="Tenant A")
+    today = datetime.now(timezone.utc).date()
+
+    await _insert_invoice(
+        tenant_id=signup["user"]["tenant_id"],
+        number="INV-1",
+        party_name="Acme",
+        issue_date=today - timedelta(days=10),
+        due_date=today - timedelta(days=5),
+        total_amount=Decimal("100.00"),
+        status=InvoiceStatusEnum.VOID,
+    )
+    await _insert_invoice(
+        tenant_id=signup["user"]["tenant_id"],
+        number="INV-2",
+        party_name="Acme",
+        issue_date=today - timedelta(days=10),
+        due_date=today - timedelta(days=5),
+        total_amount=Decimal("200.00"),
+        status=InvoiceStatusEnum.PAID,
+    )
+    await _insert_invoice(
+        tenant_id=signup["user"]["tenant_id"],
+        number="INV-3",
+        party_name="Acme",
+        issue_date=today - timedelta(days=10),
+        due_date=today - timedelta(days=5),
+        total_amount=Decimal("300.00"),
+        status=InvoiceStatusEnum.ISSUED,
+    )
+
+    window_from = (today - timedelta(days=30)).isoformat()
+    window_to = today.isoformat()
+    r = client.get(
+        f"/reports/receivables?from={window_from}&to={window_to}",
+        headers={"Authorization": f"Bearer {signup['access_token']}"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    # Only the ISSUED invoice (300.00) counts.
+    assert body["total_outstanding"]["amount"] == "300.00"
+    buckets = {b["bucket"]: b for b in body["aging_buckets"]}
+    total_count = sum(b["count"] for b in buckets.values())
+    assert total_count == 1
+
+
+async def test_receivables_respects_date_window(client: TestClient) -> None:
+    signup = _sign_up(client, email="alice@a.com", agency="Tenant A")
+    today = datetime.now(timezone.utc).date()
+
+    # Inside window
+    await _insert_invoice(
+        tenant_id=signup["user"]["tenant_id"],
+        number="IN-WINDOW",
+        party_name="Acme",
+        issue_date=today - timedelta(days=10),
+        due_date=today - timedelta(days=5),
+        total_amount=Decimal("100.00"),
+    )
+    # Outside window — issued too long ago
+    await _insert_invoice(
+        tenant_id=signup["user"]["tenant_id"],
+        number="OUT-OF-WINDOW",
+        party_name="Acme",
+        issue_date=today - timedelta(days=200),
+        due_date=today - timedelta(days=195),
+        total_amount=Decimal("999.99"),
+    )
+
+    window_from = (today - timedelta(days=30)).isoformat()
+    window_to = today.isoformat()
+    r = client.get(
+        f"/reports/receivables?from={window_from}&to={window_to}",
+        headers={"Authorization": f"Bearer {signup['access_token']}"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total_outstanding"]["amount"] == "100.00"
 
 
 # --------------------------------------------------------------------------- #

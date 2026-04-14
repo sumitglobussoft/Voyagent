@@ -54,6 +54,14 @@ class RefreshTokenRevokedError(AuthError):
     """Refresh token has been revoked or never existed."""
 
 
+class EmailNotVerifiedError(AuthError):
+    """Sign-in blocked because the user has not verified their email."""
+
+
+class InvalidVerificationTokenError(AuthError):
+    """Email-verification token is unknown or expired."""
+
+
 # --------------------------------------------------------------------------- #
 # Models                                                                      #
 # --------------------------------------------------------------------------- #
@@ -176,8 +184,10 @@ __all__ = [
     "AccessTokenPayload",
     "AuthError",
     "EmailAlreadyRegisteredError",
+    "EmailNotVerifiedError",
     "InvalidCredentialsError",
     "InvalidTokenError",
+    "InvalidVerificationTokenError",
     "RefreshTokenExpiredError",
     "RefreshTokenRevokedError",
     "hash_refresh_token",

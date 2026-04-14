@@ -65,16 +65,6 @@ def test_haf_bks24_missing_issue_date_raises_validation_failed() -> None:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xfail(
-    reason=(
-        "The HAF parser pulls airline_code as a raw 2-char slice with no "
-        "validation against an IATA allow-list or the header's declared "
-        "agent. A wrong airline code silently becomes part of the parsed "
-        "record. Filing this test to document the gap — once the parser "
-        "enforces an allow-list it should flip to passing."
-    ),
-    strict=False,
-)
 def test_haf_bks24_unknown_airline_code_is_rejected() -> None:
     header = _bfh01("IN", "INR", "12345678", "20260401", "20260415", "0000000001")
     trailer = _bft99(2, 0)
@@ -91,7 +81,31 @@ def test_haf_bks24_unknown_airline_code_is_rejected() -> None:
     content = "\n".join([header, bks24, trailer]).encode("utf-8")
     with pytest.raises(ValidationFailedError) as exc:
         parse_haf(content, source_ref="bad")
-    assert "airline" in str(exc.value).lower()
+    msg = str(exc.value)
+    # Message must reference the offending airline code and the parser's line number.
+    assert "'ZZ'" in msg
+    assert "airline" in msg.lower()
+    # Line number debugging aid: BKS24 is line 2 in this file.
+    assert "line 2" in msg
+
+
+@pytest.mark.parametrize("airline", ["AI", "6E", "EK", "BA"])
+def test_haf_bks24_known_airline_code_parses(airline: str) -> None:
+    """Regression guard: real IATA codes on the allow-list still parse."""
+    header = _bfh01("IN", "INR", "12345678", "20260401", "20260415", "0000000001")
+    bks24 = _bks24(
+        "1761234567890",
+        airline,
+        "20260402",
+        gross_cents=100_000,
+        commission_cents=0,
+        taxes_cents=0,
+        net_cents=100_000,
+    )
+    trailer = _bft99(1, 100_000)
+    content = "\n".join([header, bks24, trailer]).encode("utf-8")
+    parsed = parse_haf(content, source_ref="ok")
+    assert parsed.transactions[0].airline_code == airline
 
 
 # --------------------------------------------------------------------------- #

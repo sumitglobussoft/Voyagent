@@ -76,23 +76,11 @@ async def _seed_session_with_pending(
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xfail(
-    reason=(
-        "InMemorySessionStore does not yet support approval expiry: "
-        "PendingApproval has no TTL / expires_at and resolve_approval "
-        "never transitions to 'expired'. A test that fast-forwards the "
-        "clock cannot detect the timeout until the store grows a "
-        "sweeper. Once the contract exists this test should pass by "
-        "calling a new ``store.expire_stale_approvals(now)`` helper."
-    ),
-    strict=False,
-)
 async def test_pending_approval_timeout_marks_expired_and_returns_timeout_result() -> None:
     tenant_id = _new_uuid7_like()
     store = InMemorySessionStore()
     sess, approval_id = await _seed_session_with_pending(store, tenant_id=tenant_id)
 
-    # Forward-looking API — does not exist yet.
     expire_stale = getattr(store, "expire_stale_approvals", None)
     assert expire_stale is not None, "InMemorySessionStore.expire_stale_approvals missing"
     n_expired = await expire_stale(
@@ -106,37 +94,52 @@ async def test_pending_approval_timeout_marks_expired_and_returns_timeout_result
     assert getattr(ap, "granted", None) is None
     assert getattr(ap, "status", None) == "expired"
 
+    # Re-running the sweep with no new stale rows must be a no-op.
+    n_second = await expire_stale(
+        now=datetime.now(timezone.utc) + timedelta(hours=2)
+    )
+    assert n_second == 0
+
+    # A fresh pending approval seeded AFTER the sweep is not flipped
+    # until its own expires_at passes.
+    from voyagent_agent_runtime.session import PendingApproval
+
+    now = datetime.now(timezone.utc)
+    fresh = PendingApproval(
+        id="ap-fresh-xyz",
+        tool_name="issue_ticket",
+        summary="Issue fresh ticket",
+        turn_id="t-fresh000",
+        requested_at=now,
+    )
+    await store.add_approval(sess.id, fresh)
+    n_third = await expire_stale(now=now + timedelta(minutes=1))
+    assert n_third == 0
+    refreshed = await store.get(sess.id)
+    assert refreshed is not None
+    assert refreshed.pending_approvals["ap-fresh-xyz"].status == "pending"
+
 
 # --------------------------------------------------------------------------- #
 # 2. Cross-tenant approval resolution                                         #
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xfail(
-    reason=(
-        "InMemorySessionStore.resolve_approval does not accept a "
-        "'resolver tenant' argument and therefore cannot reject a "
-        "cross-tenant attempt. Once the store signature grows an "
-        "``actor_tenant_id`` check this test should pass by calling "
-        "``store.resolve_approval(..., actor_tenant_id=other_tenant)`` "
-        "and expecting a PermissionError / 403 from the caller."
-    ),
-    strict=False,
-)
 async def test_cross_tenant_approval_resolution_is_rejected_and_stays_pending() -> None:
+    from voyagent_agent_runtime.session import CrossTenantApprovalError
+
     owner_tenant = _new_uuid7_like()
     foreign_tenant = _new_uuid7_like()
     store = InMemorySessionStore()
     sess, approval_id = await _seed_session_with_pending(store, tenant_id=owner_tenant)
 
-    # Forward-looking: store.resolve_approval should take an actor_tenant_id
-    # argument and reject resolution if it does not match sess.tenant_id.
-    with pytest.raises(PermissionError):
+    # A foreign tenant cannot resolve an approval scoped to another.
+    with pytest.raises(CrossTenantApprovalError):
         await store.resolve_approval(
             sess.id,
             approval_id,
             True,
-            actor_tenant_id=foreign_tenant,  # type: ignore[call-arg]
+            actor_tenant_id=foreign_tenant,
         )
 
     refreshed = await store.get(sess.id)
@@ -145,6 +148,21 @@ async def test_cross_tenant_approval_resolution_is_rejected_and_stays_pending() 
     # The approval is still un-resolved.
     assert ap.granted is None
     assert ap.resolved_at is None
+    assert ap.status == "pending"
+
+    # CrossTenantApprovalError must be a PermissionError subclass so the
+    # HTTP layer's existing 403 mapping works without changes.
+    assert issubclass(CrossTenantApprovalError, PermissionError)
+
+    # The legitimate owner can still resolve it.
+    await store.resolve_approval(
+        sess.id, approval_id, True, actor_tenant_id=owner_tenant
+    )
+    refreshed = await store.get(sess.id)
+    assert refreshed is not None
+    ap = refreshed.pending_approvals[approval_id]
+    assert ap.granted is True
+    assert ap.status == "granted"
 
 
 # --------------------------------------------------------------------------- #

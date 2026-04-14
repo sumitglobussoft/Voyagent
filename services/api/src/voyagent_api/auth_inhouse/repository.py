@@ -8,6 +8,7 @@ HTTP surface.
 
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import datetime, timezone
 
@@ -18,6 +19,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from schemas.storage import RefreshTokenRow, Tenant, User, UserRole
 
 from .tokens import EmailAlreadyRegisteredError
+
+
+def _skip_email_verification() -> bool:
+    """Honor ``VOYAGENT_AUTH_SKIP_EMAIL_VERIFICATION`` for dev/tests."""
+    raw = os.environ.get("VOYAGENT_AUTH_SKIP_EMAIL_VERIFICATION", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
 
 
 class UserRepository:
@@ -79,7 +86,7 @@ class UserRepository:
             email=email.lower(),
             role=UserRole.AGENCY_ADMIN,
             password_hash=password_hash,
-            email_verified=False,
+            email_verified=_skip_email_verification(),
         )
         self._session.add(user)
         try:
@@ -99,6 +106,15 @@ class UserRepository:
             update(User)
             .where(User.id == user_id)
             .values(last_login_at=datetime.now(timezone.utc))
+        )
+        await self._session.commit()
+
+    async def mark_email_verified(self, user_id: uuid.UUID) -> None:
+        """Flip ``email_verified`` to True for a given user."""
+        await self._session.execute(
+            update(User)
+            .where(User.id == user_id)
+            .values(email_verified=True)
         )
         await self._session.commit()
 

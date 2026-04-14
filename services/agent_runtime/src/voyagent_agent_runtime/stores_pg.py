@@ -21,7 +21,7 @@ from __future__ import annotations
 import functools
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, TypeVar
 
 from sqlalchemy import delete, insert, select, update
@@ -43,7 +43,13 @@ from schemas.storage import (
     SessionRow,
 )
 
-from .session import Message, PendingApproval, Session
+from .session import (
+    CrossTenantApprovalError,
+    DEFAULT_APPROVAL_TTL_SECONDS,
+    Message,
+    PendingApproval,
+    Session,
+)
 from .tools import AuditSink
 
 logger = logging.getLogger(__name__)
@@ -166,6 +172,8 @@ class PostgresSessionStore:
                 requested_at=ap.requested_at,
                 granted=ap.granted,
                 resolved_at=ap.resolved_at,
+                expires_at=getattr(ap, "expires_at", None),
+                status=getattr(ap, "status", None) or "pending",
             )
             for ap in ap_rows
         }
@@ -276,10 +284,24 @@ class PostgresSessionStore:
                 )
 
     async def add_approval(
-        self, session_id: EntityId, ap: PendingApproval
+        self,
+        session_id: EntityId,
+        ap: PendingApproval,
+        *,
+        approval_ttl_seconds: int | None = None,
     ) -> None:
         """Upsert a pending approval row keyed on the approval id."""
         sid = _entity_id_to_uuid(session_id)
+        # Stamp expires_at off requested_at so a caller that pre-dates
+        # requested_at for a backfill test still gets a stable deadline.
+        expires_at = ap.expires_at
+        if expires_at is None:
+            ttl = (
+                approval_ttl_seconds
+                if approval_ttl_seconds is not None
+                else DEFAULT_APPROVAL_TTL_SECONDS
+            )
+            expires_at = ap.requested_at + timedelta(seconds=ttl)
         async with self._sessionmaker() as db:
             async with db.begin():
                 existing = await db.get(PendingApprovalRow, ap.id)
@@ -294,6 +316,8 @@ class PostgresSessionStore:
                             requested_at=ap.requested_at,
                             granted=ap.granted,
                             resolved_at=ap.resolved_at,
+                            expires_at=expires_at,
+                            status=ap.status,
                         )
                     )
                 else:
@@ -303,6 +327,8 @@ class PostgresSessionStore:
                     existing.requested_at = ap.requested_at
                     existing.granted = ap.granted
                     existing.resolved_at = ap.resolved_at
+                    existing.expires_at = expires_at
+                    existing.status = ap.status
                 await db.execute(
                     update(SessionRow)
                     .where(SessionRow.id == sid)
@@ -310,7 +336,12 @@ class PostgresSessionStore:
                 )
 
     async def resolve_approval(
-        self, session_id: EntityId, approval_id: str, granted: bool
+        self,
+        session_id: EntityId,
+        approval_id: str,
+        granted: bool,
+        *,
+        actor_tenant_id: EntityId | None = None,
     ) -> None:
         """Mark an approval granted/denied. Raises ``KeyError`` if unknown."""
         sid = _entity_id_to_uuid(session_id)
@@ -322,13 +353,49 @@ class PostgresSessionStore:
                         f"No pending approval {approval_id!r} on session "
                         f"{session_id!r}."
                     )
+                if actor_tenant_id is not None:
+                    sess_row = await db.get(SessionRow, sid)
+                    if sess_row is not None:
+                        owner_tenant = _uuid_to_entity_id(sess_row.tenant_id)
+                        if owner_tenant != actor_tenant_id:
+                            raise CrossTenantApprovalError(
+                                f"actor tenant {actor_tenant_id!r} cannot "
+                                f"resolve approval owned by tenant "
+                                f"{owner_tenant!r}."
+                            )
                 existing.granted = granted
                 existing.resolved_at = _utcnow()
+                existing.status = "granted" if granted else "rejected"
                 await db.execute(
                     update(SessionRow)
                     .where(SessionRow.id == sid)
                     .values(updated_at=_utcnow())
                 )
+
+    async def expire_stale_approvals(
+        self,
+        session_id: EntityId | None = None,
+        *,
+        now: datetime | None = None,
+    ) -> int:
+        """Flip any ``pending`` approval past its deadline to ``expired``."""
+        ts = now or _utcnow()
+        async with self._sessionmaker() as db:
+            async with db.begin():
+                stmt = (
+                    update(PendingApprovalRow)
+                    .where(PendingApprovalRow.status == "pending")
+                    .where(PendingApprovalRow.expires_at <= ts)
+                    .values(status="expired")
+                    .execution_options(synchronize_session=False)
+                )
+                if session_id is not None:
+                    stmt = stmt.where(
+                        PendingApprovalRow.session_id
+                        == _entity_id_to_uuid(session_id)
+                    )
+                result = await db.execute(stmt)
+                return result.rowcount or 0
 
     # Housekeeping — tests use this to keep fixture isolation tight.
     async def _wipe_session(self, session_id: EntityId) -> None:  # pragma: no cover
