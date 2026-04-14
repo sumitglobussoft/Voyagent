@@ -43,10 +43,17 @@ class ActorKindEnum(str, enum.Enum):
 
 
 # Shared SAEnum instance used by both SessionRow and AuditEventRow so the
-# Postgres enum type ``actor_kind`` is created exactly once. ``create_type``
-# defaults to True on the first mapped class that references it and is set
-# to False elsewhere via SQLAlchemy's metadata tracking.
-ACTOR_KIND_SATYPE = SAEnum(ActorKindEnum, name="actor_kind")
+# Postgres enum type ``actor_kind`` is created exactly once. The alembic
+# migration owns CREATE TYPE — the model never auto-creates schema
+# (``create_type=False``) and ``values_callable`` makes SQLAlchemy emit the
+# enum's lowercase ``value`` rather than the uppercase Python member name,
+# which Postgres rejects.
+ACTOR_KIND_SATYPE = SAEnum(
+    ActorKindEnum,
+    name="actor_kind",
+    values_callable=lambda enum_cls: [m.value for m in enum_cls],
+    create_type=False,
+)
 
 
 class SessionRow(Base, Timestamps):

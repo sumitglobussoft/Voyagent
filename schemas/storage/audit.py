@@ -93,7 +93,12 @@ class AuditEventRow(Base):
     started_at: Mapped[datetime] = mapped_column(nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(nullable=True)
     status: Mapped[AuditStatusEnum] = mapped_column(
-        SAEnum(AuditStatusEnum, name="audit_status"),
+        SAEnum(
+            AuditStatusEnum,
+            name="audit_status",
+            values_callable=lambda enum_cls: [m.value for m in enum_cls],
+            create_type=False,
+        ),
         nullable=False,
         server_default=AuditStatusEnum.STARTED.value,
     )

@@ -52,7 +52,17 @@ class User(Base, Timestamps):
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
     email: Mapped[str] = mapped_column(String(320), nullable=False)
     role: Mapped[UserRole] = mapped_column(
-        SAEnum(UserRole, name="user_role"),
+        # values_callable maps the Python enum to its DB value
+        # (``agency_admin``) instead of the default member name
+        # (``AGENCY_ADMIN``), which the Postgres enum rejects.
+        # create_type=False because the alembic migration owns the
+        # CREATE TYPE — the model never auto-creates schema.
+        SAEnum(
+            UserRole,
+            name="user_role",
+            values_callable=lambda enum_cls: [m.value for m in enum_cls],
+            create_type=False,
+        ),
         nullable=False,
         server_default=UserRole.AGENT.value,
     )
