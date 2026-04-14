@@ -86,7 +86,17 @@ preflight() {
     fi
 
     command -v docker >/dev/null 2>&1 || die "docker not installed — run bootstrap.sh"
-    docker compose version >/dev/null 2>&1 || die "docker compose plugin missing"
+
+    # Compose detection — prefer the v2 plugin, fall back to the hyphenated
+    # standalone (`docker-compose`) which is what many shared hosts still run.
+    if docker compose version >/dev/null 2>&1; then
+        COMPOSE_BIN=(docker compose)
+    elif command -v docker-compose >/dev/null 2>&1; then
+        COMPOSE_BIN=(docker-compose)
+        log "using standalone docker-compose: $(docker-compose --version 2>&1 | head -1)"
+    else
+        die "neither 'docker compose' plugin nor 'docker-compose' found"
+    fi
 }
 
 validate_env() {
@@ -129,7 +139,7 @@ resolve_version() {
 compose() {
     (
         cd "$REPO_DIR"
-        docker compose \
+        "${COMPOSE_BIN[@]}" \
             -f "$COMPOSE_FILE" \
             --env-file "$ENV_FILE" \
             "$@"
@@ -176,7 +186,7 @@ wait_healthy() {
         sleep 3
     done
     compose ps || true
-    die "stack failed to become healthy within 120s — inspect 'docker compose -f $COMPOSE_FILE logs'"
+    die "stack failed to become healthy within 120s — inspect '${COMPOSE_BIN[*]} -f $COMPOSE_FILE logs'"
 }
 
 record_history() {

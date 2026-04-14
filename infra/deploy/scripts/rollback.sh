@@ -64,11 +64,21 @@ confirm_images() {
     fi
 }
 
+_compose_cmd() {
+    if docker compose version >/dev/null 2>&1; then
+        echo "docker compose"
+    else
+        echo "docker-compose"
+    fi
+}
+
 relaunch() {
     export VOYAGENT_VERSION="$TARGET_VERSION"
+    local cc
+    cc="$(_compose_cmd)"
     (
         cd "$REPO_DIR"
-        docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --remove-orphans
+        $cc -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --remove-orphans
     )
     printf '%s rollback version=%s user=%s\n' "$(TS)" "$TARGET_VERSION" "${USER:-unknown}" >> "$HISTORY_LOG"
     log "rollback complete — running version=$TARGET_VERSION"
