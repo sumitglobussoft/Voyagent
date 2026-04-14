@@ -154,31 +154,41 @@ This proves the adapter pattern. After this, adding Sabre or Zoho Books becomes 
 
 ## 9. Open questions (to resolve before build start)
 
-1. **Tech stack & repo layout.** Language(s), framework choices, monorepo vs. polyrepo, desktop framework (Electron vs. Tauri), mobile (React Native vs. native).
-2. **Canonical domain model v0.** Draft schemas in TypeScript/JSON Schema so drivers have a contract to build against. Must include `Money`, `TaxLine`, `TaxRegime`, `NationalId`, and country-scoped `Address` from the first draft (see [D8](./docs/DECISIONS.md#d8--india-first-go-to-market-global-ready-architecture)).
-3. **Agent runtime choice.** Claude Agent SDK vs. custom orchestration on top of the Anthropic API. Prompt caching strategy matters because every driver call goes through the agent loop.
-4. **Credential vault & multi-tenant isolation model.** Per-tenant KMS? BYO-key option for enterprise customers?
-5. **Pricing & packaging signal.** Not urgent to decide, but influences whether Voyagent should be single-binary (self-hosted-friendly) or cloud-only.
+1. **Canonical domain model v0.** Draft Pydantic v2 models in `schemas/canonical/` including `Money`, `TaxLine`, `TaxRegime`, `NationalId`, country-scoped `Address` from the first pass (see [D8](./docs/DECISIONS.md#d8--india-first-go-to-market-global-ready-architecture)).
+2. **Credential vault & multi-tenant isolation model.** Per-tenant KMS? BYO-key option for enterprise customers?
+3. **Auth provider.** Clerk vs WorkOS vs Ory. Decide when the first protected route is scaffolded.
+4. **Pricing & packaging signal.** Influences whether Voyagent should also be single-binary (self-hosted-friendly) or cloud-only.
 
 **Resolved:**
 - ~~Market focus — India-first or global from day one?~~ **India-first go-to-market, globalization-safe architecture from day one.** See [D8](./docs/DECISIONS.md#d8--india-first-go-to-market-global-ready-architecture).
+- ~~Tech stack & repo layout.~~ **TypeScript frontends (Next.js web, Tauri 2 desktop, Expo mobile) + Python agent/driver runtime (FastAPI, Pydantic v2, Temporal, Playwright). pnpm + Turborepo monorepo with a uv workspace for Python.** See [D9](./docs/DECISIONS.md#d9--tech-stack-typescript-frontends--python-agentdriver-runtime) and [STACK.md](./docs/STACK.md).
+- ~~Agent runtime choice.~~ **Anthropic Python SDK with prompt caching enabled from day one, wrapped in our own orchestrator + domain-agent state machines.** See [D9](./docs/DECISIONS.md#d9--tech-stack-typescript-frontends--python-agentdriver-runtime).
 
 ## 10. Repository layout (planned)
 
+Concrete layout and package naming are in [docs/STACK.md](./docs/STACK.md). High-level shape:
+
 ```
-/
+voyagent/
 ├── README.md                  ← you are here
 ├── LICENSE
+├── pnpm-workspace.yaml        ← (planned) JS workspace root
+├── pyproject.toml             ← (planned) uv workspace root
+├── turbo.json                 ← (planned) pipeline graph
 ├── docs/
 │   ├── ACTIVITIES.md          ← verbatim activity inventory from the customer
 │   ├── ARCHITECTURE.md        ← deep-dive on the 6-layer architecture
-│   └── DECISIONS.md           ← decision log (name, scope, tradeoffs)
-├── packages/                  ← (future) canonical model, drivers, tool runtime
-├── apps/                      ← (future) web, desktop, mobile clients
-└── services/                  ← (future) orchestrator, agent runtime, platform services
+│   ├── DECISIONS.md           ← decision log
+│   └── STACK.md               ← tech stack + repo layout + tooling
+├── apps/                      ← (future) web (Next.js), desktop (Tauri 2), mobile (Expo)
+├── packages/                  ← (future) @voyagent/core, ui, chat, sdk, config, icons
+├── services/                  ← (future) api, agent_runtime, worker, browser_runner
+├── drivers/                   ← (future) one package per GDS / accounting / portal / rail
+├── schemas/canonical/         ← (future) Pydantic v2 — the single source of truth
+└── infra/                     ← (future) docker, terraform, codegen scripts
 ```
 
-Only the root files and `docs/` exist today. Everything under `packages/`, `apps/`, and `services/` is planned, not built.
+Only the root files and `docs/` exist today. Everything else is planned, not built.
 
 ## 11. Contributing
 

@@ -182,6 +182,52 @@ Revisit when a clear customer pull exists.
 
 ---
 
+## D9 — Tech stack: TypeScript frontends + Python agent/driver runtime
+
+**Date:** 2026-04-14
+**Status:** Accepted
+
+**Context.** We needed a stack that maximizes code sharing across web / desktop / mobile, gives us the strongest ecosystem for the integration-heavy driver layer, and keeps the canonical domain model single-sourced across languages.
+
+**Decision.**
+
+**Frontends — all TypeScript/React:**
+- **Web:** Next.js (App Router) — SSR + streaming for chat.
+- **Desktop:** Tauri 2 (Rust shell) with a Vite + React frontend — small binary, low memory, clean plugin story for OS-native drivers.
+- **Mobile:** React Native + Expo (EAS for builds) — reports + desktop remote-control relay.
+- **Monorepo:** pnpm workspaces + Turborepo.
+- **Shared UI:** Tamagui for cross-platform components where sensible; Radix + Tailwind elsewhere.
+
+**Backend / agent runtime — Python:**
+- **HTTP API:** FastAPI (REST + SSE for agent streaming).
+- **Canonical model:** Pydantic v2 — the single source of truth; emits JSON Schema consumed by TS via `openapi-typescript` into `@voyagent/core`.
+- **Agent loop:** Anthropic Python SDK with prompt caching enabled from day one.
+- **Browser automation:** Playwright (Python) — first-class for visa/portal drivers.
+- **Long-running workflows:** Temporal — visa tracking, BSP reconciliation, async driver retries.
+- **Data:** PostgreSQL + Redis + S3-compatible object store.
+
+**Drivers — primarily Python.** Desktop-bound drivers (Tally ODBC, smart-card readers, local printers) run as a local Python sidecar launched by the Tauri desktop app over a local socket.
+
+**Alternatives considered.**
+- *Pure TypeScript everywhere (Hono + tRPC backend, Node drivers).* Simpler team story, weaker Playwright + OCR + data ecosystem, and Anthropic's Python SDK has a slight agent-patterns lead. Rejected for the moat, kept as a fallback if hiring shape forces it.
+- *Electron instead of Tauri.* More examples, bigger ecosystem, but 10× binary and higher memory footprint matter for a desktop power-user tool.
+- *Flutter for all three clients.* Weaker web and agentic-chat UI ecosystem; code-sharing story with web-specific payment/auth SDKs is poor.
+- *.NET MAUI / WinUI.* Would be sensible if Windows-only and Tally-first. We're neither — cross-platform desktop matters for global expansion.
+- *Inngest / Hatchet instead of Temporal.* Lighter ops, smaller. Acceptable substitutes; not a day-one decision.
+
+**Consequences.**
+- Two-language stack → higher hiring bar, context-switch tax. Accepted for the ecosystem payoff.
+- Pydantic → TS generation has edge cases (unions, discriminated types); `@voyagent/core` carries a thin hand-written adapter layer for the tricky bits.
+- Tauri's ecosystem is smaller than Electron's — weird native deps may require writing Rust plugins. Acceptable cost.
+- Temporal adds ops complexity early; if it bites, Inngest/Hatchet are drop-in-ish replacements.
+
+**Follow-ups.**
+- See [STACK.md](./STACK.md) for concrete repo layout, package names, entry points, build tooling, and the Pydantic → TS contract flow.
+- Canonical model v0 (open question in README) is now "write Pydantic v2 models in `schemas/canonical` with the globalization primitives from [D8](#d8--india-first-go-to-market-global-ready-architecture)."
+- Scaffold `pnpm-workspace.yaml`, `turbo.json`, and `pyproject.toml` at repo root as the first piece of executable work.
+
+---
+
 ## Template for future entries
 
 ```
