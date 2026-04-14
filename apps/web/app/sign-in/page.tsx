@@ -14,8 +14,10 @@ import Link from "next/link";
 
 import { SignInForm } from "./SignInForm";
 
-export const DEMO_EMAIL = "demo@voyagent.globusdemos.com";
-export const DEMO_PASSWORD = "DemoPassword123!";
+// Public demo account. Deliberately exposed on the sign-in page so visitors
+// can poke at the app without creating a tenant. Tenant is isolated.
+const DEMO_EMAIL = "demo@voyagent.globusdemos.com";
+const DEMO_PASSWORD = "DemoPassword123!";
 
 export const metadata = {
   title: "Sign in · Voyagent",
