@@ -8,7 +8,6 @@
  * components via `lib/auth.ts`.
  */
 import type { ReactNode } from "react";
-import Link from "next/link";
 
 import { getCurrentUser } from "@/lib/auth";
 
@@ -35,7 +34,10 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
             boxSizing: "border-box",
           }}
         >
-          <Link
+          {/* Plain anchor (NOT next/link) so basePath isn't auto-prepended.
+              We want the wordmark to navigate back to the marketing
+              landing at "/", not to "/app/". */}
+          <a
             href="/"
             style={{
               fontWeight: 700,
@@ -45,7 +47,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
             }}
           >
             Voyagent
-          </Link>
+          </a>
           <div style={{ display: "flex", alignItems: "center", gap: 16, fontSize: 14 }}>
             {user ? (
               <>
@@ -70,9 +72,9 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
                 </form>
               </>
             ) : (
-              <Link href="/sign-in" style={{ color: "#111" }}>
+              <a href="/app/sign-in" style={{ color: "#111" }}>
                 Sign in
-              </Link>
+              </a>
             )}
           </div>
         </header>
