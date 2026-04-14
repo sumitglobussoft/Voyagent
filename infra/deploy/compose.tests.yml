@@ -43,6 +43,13 @@ services:
     environment:
       PYTHONDONTWRITEBYTECODE: "1"
       PYTHONUNBUFFERED: "1"
+      # /app is the repo root inside the image. Some installed wheels
+      # (voyagent_agent_runtime in particular) do absolute imports like
+      # `from drivers._contracts import ...` that only resolve against
+      # the repo layout, not the installed `voyagent_driver_contracts`
+      # package. Putting /app first on PYTHONPATH makes those imports
+      # pick up the repo-root directories.
+      PYTHONPATH: "/app"
       # Unit tests don't need a live base URL but we still set a
       # default so anything that imports the env var doesn't KeyError.
       VOYAGENT_BASE_URL: "http://localhost/"
@@ -82,6 +89,7 @@ services:
     environment:
       PYTHONDONTWRITEBYTECODE: "1"
       PYTHONUNBUFFERED: "1"
+      PYTHONPATH: "/app"
       # In-network edge, not the public Cloudflare URL — faster and
       # avoids Cloudflare-injected 5xx flakes. Override with
       # --base-url on run-tests-on-server.sh if you need external.
