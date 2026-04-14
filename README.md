@@ -3,7 +3,7 @@
 **The Agentic Travel OS.**
 *One chat. Every GDS, every accounting system, every workflow.*
 
-> **Status:** Planning phase. No code yet. This repository currently captures the product vision, scope, architecture, and open questions so the team can align before building. See [docs/](./docs/) for deeper material.
+> **Status:** Planning phase, scaffolding landed. The product vision, architecture, and canonical model v0 are in place, and the monorepo skeleton (pnpm + uv workspaces, Next.js web stub, FastAPI service stub, local dev docker compose, CI) is scaffolded and ready to bootstrap with `pnpm install && uv sync`. Driver *contracts* are defined under [`drivers/_contracts/`](./drivers/_contracts/); concrete drivers (Amadeus, Tally, BSP India, ...) are the next step. See [docs/](./docs/) for planning material.
 
 ---
 
@@ -181,16 +181,27 @@ voyagent/
 │   ├── DECISIONS.md           ← decision log
 │   ├── STACK.md               ← tech stack + repo layout + tooling
 │   └── CANONICAL_MODEL.md     ← canonical domain model design rationale
-├── schemas/canonical/         ← Pydantic v2 — the single source of truth (v0 landed)
-├── apps/                      ← (future) web (Next.js), desktop (Tauri 2), mobile (Expo)
-├── packages/                  ← (future) @voyagent/core, ui, chat, sdk, config, icons
-├── services/                  ← (future) api, agent_runtime, worker, browser_runner
-├── drivers/                   ← (future) one package per GDS / accounting / portal / rail
-└── infra/                     ← (future) docker, terraform, codegen scripts
+├── schemas/canonical/         ← Pydantic v2 — the canonical domain model (v0 landed)
+├── drivers/_contracts/        ← Driver capability Protocols + CapabilityManifest + error types
+├── apps/
+│   └── web/                   ← Next.js 15 skeleton (page says "planning phase")
+├── services/
+│   ├── api/                   ← FastAPI skeleton — /health + /schemas/money probe
+│   ├── agent_runtime/         ← (skeleton) orchestrator + domain agents + tool runtime
+│   ├── worker/                ← (skeleton) Temporal workers
+│   └── browser_runner/        ← (skeleton) Playwright worker for portals
+├── tests/
+│   └── canonical/             ← pytest invariant tests for the canonical model
+├── infra/
+│   └── docker/                ← dev.yml — Postgres, Redis, Temporal, MinIO
+├── .github/workflows/ci.yml   ← node-test + python-test + codegen-drift jobs
+├── pnpm-workspace.yaml · turbo.json · package.json · pyproject.toml · Makefile
 ```
 
-`docs/` and `schemas/canonical/` exist today. Everything else is planned,
-not built.
+Everything above exists today as scaffolding. The next steps leave
+scaffolding territory: desktop (Tauri) and mobile (Expo) apps,
+`packages/` (@voyagent/core, ui, chat, sdk, config, icons), and the first
+concrete drivers (Amadeus, Tally, BSP India).
 
 ## 11. Contributing
 

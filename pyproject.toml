@@ -1,0 +1,36 @@
+[project]
+name = "voyagent"
+version = "0.0.0"
+description = "Agentic travel OS - workspace root"
+requires-python = ">=3.12"
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[tool.uv.workspace]
+members = [
+    "schemas/canonical",
+    "drivers/*",
+    "services/*",
+    "tests",
+]
+
+[tool.uv.sources]
+voyagent-schemas-canonical = { workspace = true }
+voyagent-driver-contracts = { workspace = true }
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "N", "ASYNC"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

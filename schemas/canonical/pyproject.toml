@@ -1,0 +1,23 @@
+[project]
+name = "voyagent-schemas-canonical"
+version = "0.0.0"
+description = "Voyagent canonical domain model (Pydantic v2) - single source of truth."
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.7",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# The package root is this directory itself, installed as `schemas.canonical`
+# (importable via namespace through the sibling `schemas/__init__.py`-less
+# parent). For local editable installs, `uv sync` adds the repo root to sys.path
+# so `from schemas.canonical import ...` works. The wheel build below preserves
+# the same import path by force-including this directory at `schemas/canonical/`.
+[tool.hatch.build.targets.wheel]
+packages = []
+
+[tool.hatch.build.targets.wheel.force-include]
+"." = "schemas/canonical"

@@ -1,0 +1,1 @@
+"""voyagent-worker — skeleton package."""

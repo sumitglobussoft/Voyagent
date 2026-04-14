@@ -1,0 +1,26 @@
+[project]
+name = "voyagent-driver-contracts"
+version = "0.0.0"
+description = "Voyagent driver capability interfaces and manifest schema."
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.7",
+    "voyagent-schemas-canonical",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# This directory holds the driver contract modules (`errors.py`, plus
+# capability interfaces authored separately). It installs as the
+# namespace package `voyagent.drivers._contracts` at runtime via a
+# repo-root sys.path entry; the wheel build preserves the directory.
+[tool.hatch.build.targets.wheel]
+packages = []
+
+[tool.hatch.build.targets.wheel.force-include]
+"." = "voyagent_driver_contracts"
+
+[tool.uv.sources]
+voyagent-schemas-canonical = { workspace = true }

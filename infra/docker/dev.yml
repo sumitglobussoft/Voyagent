@@ -1,0 +1,76 @@
+name: voyagent-dev
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: voyagent-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: voyagent
+      POSTGRES_PASSWORD: voyagent
+      POSTGRES_DB: voyagent
+    ports:
+      - "5432:5432"
+    volumes:
+      - voyagent-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U voyagent -d voyagent"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    container_name: voyagent-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - voyagent-redis-data:/data
+
+  temporal:
+    image: temporalio/auto-setup:1.25
+    container_name: voyagent-temporal
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_USER: voyagent
+      POSTGRES_PWD: voyagent
+      POSTGRES_SEEDS: postgres
+    ports:
+      - "7233:7233"
+
+  temporal-ui:
+    image: temporalio/ui:2.31.0
+    container_name: voyagent-temporal-ui
+    restart: unless-stopped
+    depends_on:
+      - temporal
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:8088
+    ports:
+      - "8088:8080"
+
+  minio:
+    image: minio/minio:latest
+    container_name: voyagent-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: voyagent
+      MINIO_ROOT_PASSWORD: voyagent
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - voyagent-minio-data:/data
+
+volumes:
+  voyagent-postgres-data:
+  voyagent-redis-data:
+  voyagent-minio-data:
