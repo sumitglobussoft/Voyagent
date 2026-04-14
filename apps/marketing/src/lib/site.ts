@@ -8,9 +8,15 @@
 export const SITE = {
   name: "Voyagent",
   category: "The Agentic Travel OS",
-  tagline: "One chat. Every GDS, every accounting system, every workflow.",
+  tagline:
+    "The operating system for travel agencies — one chat, every vendor, zero swivel-chair work.",
   description:
-    "Voyagent is an agentic operating system for travel agencies. One chat replaces ticketing, visa, hotels, holidays, and accounting work across every GDS, portal and accounting stack.",
+    "Voyagent is the agentic operating system travel agencies have been waiting for. A single chat interface drives ticketing, visa, hotels, holidays, and accounting across every GDS, portal, and accounting stack your team already runs — with audit trails and human approvals on every side-effect.",
+  // Sign-in points at an early-access marketing page until real Clerk
+  // credentials are configured on the production host. Keeping this
+  // centralised avoids dead-linking the live CTA back to /app while
+  // the agent runtime is still gated.
+  signInUrl: "/early-access",
   appUrl: "/app",
   defaultOgUrl: "https://voyagent.globusdemos.com",
 } as const;

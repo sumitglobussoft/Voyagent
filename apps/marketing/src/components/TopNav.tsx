@@ -44,7 +44,7 @@ export function TopNav() {
 
         <div className="hidden items-center gap-3 md:flex">
           <Link
-            href={SITE.appUrl}
+            href={SITE.signInUrl}
             className="text-sm font-medium text-slate-700 transition hover:text-primary"
           >
             Sign in
@@ -112,7 +112,7 @@ export function TopNav() {
           ))}
           <div className="mt-2 flex items-center gap-3 border-t border-slate-200 pt-3">
             <Link
-              href={SITE.appUrl}
+              href={SITE.signInUrl}
               className="flex-1 rounded-md border border-slate-200 px-3 py-2 text-center text-sm font-medium text-slate-700"
             >
               Sign in
