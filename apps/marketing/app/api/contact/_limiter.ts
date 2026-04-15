@@ -22,7 +22,9 @@ const emailHits = new Map<string, number[]>();
 const globalHits: number[] = [];
 
 function pruneAndCount(hits: number[], now: number, windowMs: number): number {
-  while (hits.length > 0 && now - hits[0] > windowMs) {
+  while (hits.length > 0) {
+    const head = hits[0];
+    if (head === undefined || now - head <= windowMs) break;
     hits.shift();
   }
   return hits.length;
