@@ -1,10 +1,19 @@
 # Voyagent Implementation Plan
 
-Living punch-list for the v0 alpha as of 2026-04-14. Pairs with [README.md](./README.md) (what exists) and [docs/DECISIONS.md](./docs/DECISIONS.md) (why).
+Living punch-list for the v0 alpha as of 2026-04-15. Pairs with [README.md](./README.md) (what exists), [CHANGELOG.md](./CHANGELOG.md) (what shipped when), and [docs/DECISIONS.md](./docs/DECISIONS.md) (why).
 
 ## 1. Shipped
 
-Everything currently in `main`, grouped by domain. Most recent pushes: `8182e1a`, `b194818`, `6b96dc9`, `178fcad`; the previous session ended at `3fb9a25`.
+Everything currently in `main`, grouped by domain. Most recent pushes (2026-04-15): `5e48322` (vendor onboarding doc), `b994465` (tier A polish), `903ed6f → 0600f04` (production bug fixes — /app loop, next= preservation, /api/contact 404), `02286a4` (audit hook + admin RBAC + UUIDv7), `c439755` (audit log viewer + desktop tabs + mobile typing), `ac41dc5 → 39f1350` (marketing alignment + /changelog + Playwright). Previous day's wrap was `8182e1a`.
+
+### Recent additions (2026-04-15)
+
+- **Audit log viewer** `/app/audit` with admin-RBAC gate (`require_agency_admin` rejects non-admins with `forbidden_role`), filterable by actor / kind / date range, inline JSON payload via `<details>`, kind-aware badge color map. `approval.granted` / `approval.rejected` events flow from the resolve endpoint into `audit_events.tool` (best-effort try/except so audit failure cannot roll back the approval state transition).
+- **Vendor onboarding doc** at `/docs/VENDOR_ONBOARDING` and `docs/VENDOR_ONBOARDING.md` — client-facing per-vendor sign-up requirements (TBO, Amadeus, Tally, VFS, Hotelbeds).
+- **Demo account** `demo@voyagent.globusdemos.com` exposed on `/app/sign-in` with a "Use demo credentials" pre-fill link (`?demo=1`); tenant deliberately isolated.
+- **Three production bugs closed**: `/app` redirect loop (host nginx `return 308` → `proxy_pass` direct), middleware `next=` preservation (rewrote matcher + path normalization + `safeNextPath` open-redirect guard + reconstruct origin from `X-Forwarded-Host`), `/api/contact` 404 (added nginx `location = /api/contact` ahead of catch-all + real per-IP / per-email / global rate limiter in marketing route).
+- **Open-redirect safety** wired through `apps/web/lib/next-url.ts::safeNextPath()` — rejects `//evil.com`, `https://`, `javascript:`, paths with backslashes or colons. Used at three layers: middleware, sign-in/sign-up pages, both server actions.
+- **Playwright E2E**: 161 passed / 0 failed / 3 skipped (1.3 min) including `redirect-safety.spec.ts` with 8 hostile-shape parametrized tests (sign-in × sign-up × {//, https://, javascript:}).
 
 ### Auth (in-house)
 - `POST /api/auth/sign-up`, `/sign-in`, `/refresh`, `/sign-out`, `GET /api/auth/me`.

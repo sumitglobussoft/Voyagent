@@ -9,7 +9,7 @@ Voyagent is an agentic operating system for travel agencies. It replaces the man
 
 ## Status
 
-v0 alpha, live at [voyagent.globusdemos.com](https://voyagent.globusdemos.com) as of 2026-04-14. In-house auth, chat sessions with the streaming agent loop, the approvals queue, the enquiry lifecycle, receivables/payables/itinerary reports, and hotels search + rate-check through TBO all work end to end against a real Anthropic backend. Hotels booking, Amadeus ticketing, the Tally desktop bridge, and VFS browser automation are wired at the Protocol level but blocked on real vendor credentials. `pytest --collect-only` reports ~750 tests across Python and TypeScript suites.
+v0 alpha, live at [voyagent.globusdemos.com](https://voyagent.globusdemos.com) as of 2026-04-15. In-house auth, chat sessions with the streaming agent loop, the approvals inbox (with audit trail), the enquiry lifecycle (with promote-to-chat), the audit log viewer (admin-only RBAC), receivables/payables/itinerary reports against the new ledger tables, and hotels search + rate-check through TBO all work end-to-end against a real Anthropic backend. Hotels booking, Amadeus ticketing, the Tally desktop bridge, and VFS browser automation are wired at the protocol level but blocked on real vendor credentials — see [docs/VENDOR_ONBOARDING.md](./docs/VENDOR_ONBOARDING.md) for the client-facing list. **A demo account is exposed on the sign-in page** (`demo@voyagent.globusdemos.com` / `DemoPassword123!`, isolated tenant) so anyone can poke the live app without creating one. `pytest --collect-only` reports ~750 tests across Python suites; vitest covers the shared TS packages; Playwright suite is at **161 passed / 3 skipped / 0 failed** against the live deployment, including 8 hostile-shape open-redirect safety tests.
 
 ## Architecture at a glance
 
@@ -20,7 +20,7 @@ v0 alpha, live at [voyagent.globusdemos.com](https://voyagent.globusdemos.com) a
 | Agent runtime  | In-process orchestrator + domain agents in `services/agent_runtime`, streamed to clients over FastAPI SSE. No external workflow engine. |
 | Data           | Postgres 16 (SQLAlchemy 2 async + Alembic), Redis 7 for JWT revocation + email-verification tokens |
 | Auth           | In-house: Argon2id passwords, HS256 access JWTs, opaque rotating refresh tokens, stub email verification |
-| Shipped surfaces | Chat, approvals inbox, enquiry lifecycle, receivables / payables / itinerary reports |
+| Shipped surfaces | Chat, approvals inbox, enquiry lifecycle, audit log viewer (admin RBAC), receivables / payables / itinerary reports |
 | Build          | pnpm workspaces + uv workspace in a single monorepo                                   |
 
 Deeper references live in [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md), [docs/STACK.md](./docs/STACK.md), and [docs/DECISIONS.md](./docs/DECISIONS.md) — in particular D9 (tech stack) and D11 (in-process agent runtime). Two deliberate removals from the earlier plan still stand: the Clerk-hosted auth path was replaced with the in-house stack above, and there is no external workflow engine in v0 — long-running tool calls run inside the same agent loop that streams to the client.

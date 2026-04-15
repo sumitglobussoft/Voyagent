@@ -9,6 +9,49 @@ deploy to the demo host.
 
 ---
 
+## 2026-04-15 — Vendor onboarding doc
+
+- New client-facing onboarding doc at `/docs/VENDOR_ONBOARDING` (also
+  in `docs/VENDOR_ONBOARDING.md`) — per-vendor (TBO, Amadeus, Tally,
+  VFS, Hotelbeds) sign-up links, account requirements, what to send
+  back, security notes, suggested sequence
+- Commit `5e48322`
+
+## 2026-04-15 — Tier A polish
+
+- External_id UUID drift audit: confirmed `external_id` is opaque (legacy
+  IDP id, plain `String(128)`, never validated as `EntityId`); two other
+  `uuid4()` calls (jti, verification token) are also opaque nonces. Comment-only
+  documenting change
+- Audit `kind` badge color map: `approval.granted` green, `.rejected` red,
+  `.expired` grey, `auth.verify` amber, `tool.*` neutral. Identifier-aware
+  formatting (no capitalize, monospace) for dotted/underscored kinds
+- E2E tightened + new `redirect-safety.spec.ts`: 8 hostile-shape tests
+  (`//evil.com`, `https://evil.com`, `javascript:alert(1)` × sign-in/sign-up)
+  all confirmed reject + fall back to `/chat`. Final suite **161 passed
+  / 0 failed / 3 skipped**
+- Commit `b994465`
+
+## 2026-04-15 — Three production bugs closed
+
+- **`/app` redirect loop** — host nginx had `location = /app { return 308
+  /app/; }` which looped against Next 15's `trailingSlash:false`
+  normalization. Replaced with a straight `proxy_pass`. Source-of-truth in
+  `infra/deploy/nginx-host/voyagent.globusdemos.com.conf` now matches live
+- **Middleware drops `next=` on unauth redirects** — three layers were
+  broken: the matcher `/app/:path*` was a no-op against Next 15's basePath
+  stripping, the `pathname.startsWith('/app')` check fired on `/approvals`
+  too (substring trap), and `req.url` carried the upstream
+  `http://127.0.0.1:3011` because `next start -H 127.0.0.1` runs behind
+  nginx. Rewrote middleware to normalize stripped/unstripped paths,
+  reconstruct origin from `X-Forwarded-Host`, and add `safeNextPath()`
+  validator (rejects `//evil.com`, `https://`, `javascript:`)
+- **`/api/contact` 404 (not 429 as previously suspected)** — nginx
+  `location /api/` was shadowing the marketing Next.js handler. Added
+  `location = /api/contact` route ahead of the catch-all. Added a real
+  per-IP / per-email / global sliding-window rate limiter
+- Commits `0600f04` → `903ed6f`
+
 ## 2026-04-15 — Marketing alignment + changelog + Playwright E2E
 
 - Marketing pages (`/domains/*`, `/integrations`, `/architecture`, `/product`)
