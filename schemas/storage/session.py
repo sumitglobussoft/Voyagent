@@ -20,6 +20,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
     TIMESTAMP,
     UniqueConstraint,
 )
@@ -96,6 +97,10 @@ class SessionRow(Base, Timestamps):
         nullable=False,
         server_default=ActorKindEnum.HUMAN.value,
     )
+    # Auto-generated from the first user message (first 60 chars). Nullable
+    # so pre-existing sessions keep working; the web sidebar falls back to
+    # a placeholder when this is NULL.
+    title: Mapped[str | None] = mapped_column(Text(), nullable=True)
 
     __table_args__ = (
         Index("ix_sessions_tenant_created", "tenant_id", "created_at"),

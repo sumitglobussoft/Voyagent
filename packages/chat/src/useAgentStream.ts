@@ -44,6 +44,14 @@ export interface UseAgentStreamResult {
   lastEventId: string | null;
   send: (text: string, approvals?: Record<string, boolean>) => Promise<void>;
   respondToApproval: (approvalId: string, granted: boolean) => Promise<void>;
+  /** Abort the in-flight turn, if any. Safe to call when idle. */
+  stop: () => void;
+  /**
+   * Re-run a prior user message: drops the assistant reply that followed
+   * it and issues a fresh turn with the same text. No-op if the target
+   * message can't be found.
+   */
+  regenerate: (userMessageId: string) => Promise<void>;
 }
 
 function nowIso(): string {
@@ -168,6 +176,11 @@ export function useAgentStream(
    * supports one active turn per session at a time.
    */
   const inFlightRef = useRef<Promise<void> | null>(null);
+  /**
+   * AbortController for the in-flight SSE stream. `stop()` calls
+   * `.abort()` on this; `drain` resets it at the start of each turn.
+   */
+  const abortRef = useRef<AbortController | null>(null);
 
   const drain = useCallback(
     async (
@@ -176,6 +189,8 @@ export function useAgentStream(
     ): Promise<void> => {
       setError(null);
       setIsStreaming(true);
+      const controller = new AbortController();
+      abortRef.current = controller;
 
       // Append a user bubble immediately for responsiveness. Empty-text
       // resumption turns (pure approval resolutions) don't warrant a bubble.
@@ -195,6 +210,7 @@ export function useAgentStream(
         const iter = client.sendMessage(sessionId, {
           message: text,
           approvals: approvals ?? null,
+          signal: controller.signal,
           onLastEventId: (id) => setLastEventId(id),
         });
 
@@ -235,9 +251,109 @@ export function useAgentStream(
           }
         }
       } catch (err) {
-        setError(err instanceof Error ? err : new Error(String(err)));
+        // Abort is user-initiated — don't surface it as an error.
+        const isAbort =
+          err instanceof DOMException && err.name === "AbortError";
+        if (!isAbort) {
+          setError(err instanceof Error ? err : new Error(String(err)));
+        }
       } finally {
+        if (abortRef.current === controller) abortRef.current = null;
         setIsStreaming(false);
+      }
+    },
+    [client, sessionId],
+  );
+
+  const stop = useCallback((): void => {
+    abortRef.current?.abort();
+  }, []);
+
+  const regenerate = useCallback(
+    async (userMessageId: string): Promise<void> => {
+      // Find the target user message and drop everything after it, then
+      // re-fire the send path with the same text.
+      let targetText = "";
+      setMessages((prev) => {
+        const idx = prev.findIndex(
+          (m) => m.kind === "user" && m.id === userMessageId,
+        );
+        if (idx < 0) return prev;
+        const target = prev[idx];
+        if (!target || target.kind !== "user") return prev;
+        targetText = target.text;
+        // Keep everything up to and including the target user message —
+        // the follow-up drain will append a fresh assistant turn after.
+        return prev.slice(0, idx + 1);
+      });
+      if (!targetText) return;
+      // Bypass the send() bubble-append path: drain directly so we
+      // don't double-insert the user message.
+      const prior = inFlightRef.current;
+      const next = (async () => {
+        if (prior) {
+          try {
+            await prior;
+          } catch {
+            /* swallow */
+          }
+        }
+        // Re-use drain but skip the user-bubble append by passing the
+        // marker below — simplest path is to inline the logic.
+        setError(null);
+        setIsStreaming(true);
+        const controller = new AbortController();
+        abortRef.current = controller;
+        try {
+          const iter = client.sendMessage(sessionId, {
+            message: targetText,
+            approvals: null,
+            signal: controller.signal,
+            onLastEventId: (id) => setLastEventId(id),
+          });
+          for await (const event of iter) {
+            if (event.kind === "approval_request") {
+              setPendingApprovals((prev) => {
+                if (prev.some((p) => p.approval_id === event.approval_id))
+                  return prev;
+                return [
+                  ...prev,
+                  {
+                    approval_id: event.approval_id ?? "unknown",
+                    summary: event.approval_summary ?? "Approval required",
+                    turn_id: event.turn_id,
+                  },
+                ];
+              });
+              continue;
+            }
+            if (
+              event.kind === "approval_granted" ||
+              event.kind === "approval_denied"
+            ) {
+              setPendingApprovals((prev) =>
+                prev.filter((p) => p.approval_id !== event.approval_id),
+              );
+              continue;
+            }
+            setMessages((prev) => reduceEvent(prev, event));
+          }
+        } catch (err) {
+          const isAbort =
+            err instanceof DOMException && err.name === "AbortError";
+          if (!isAbort) {
+            setError(err instanceof Error ? err : new Error(String(err)));
+          }
+        } finally {
+          if (abortRef.current === controller) abortRef.current = null;
+          setIsStreaming(false);
+        }
+      })();
+      inFlightRef.current = next;
+      try {
+        await next;
+      } finally {
+        if (inFlightRef.current === next) inFlightRef.current = null;
       }
     },
     [client, sessionId],
@@ -289,5 +405,7 @@ export function useAgentStream(
     lastEventId,
     send,
     respondToApproval,
+    stop,
+    regenerate,
   };
 }

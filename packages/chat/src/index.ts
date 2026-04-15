@@ -25,6 +25,18 @@ export type { ToolCallCardProps } from "./ToolCallCard.web.js";
 export { ApprovalPrompt } from "./ApprovalPrompt.web.js";
 export type { ApprovalPromptProps } from "./ApprovalPrompt.web.js";
 
+export { Markdown } from "./Markdown.web.js";
+export type { MarkdownProps } from "./Markdown.web.js";
+
+export { MessageActions } from "./MessageActions.web.js";
+export type { MessageActionsProps } from "./MessageActions.web.js";
+
+export { EmptyState, SUGGESTIONS } from "./EmptyState.web.js";
+export type { EmptyStateProps } from "./EmptyState.web.js";
+
+export { SessionHeader } from "./SessionHeader.web.js";
+export type { SessionHeaderProps } from "./SessionHeader.web.js";
+
 export { useAgentStream } from "./useAgentStream.js";
 export type {
   UseAgentStreamOptions,

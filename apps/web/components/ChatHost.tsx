@@ -30,9 +30,19 @@ export interface ChatHostProps {
   apiUrl: string;
   accessToken: string;
   user: ChatUser;
+  /** Optional session id from `?session_id=...`. */
+  sessionId?: string;
+  /** True when `?new=1` was passed — forces a fresh session. */
+  forceNew?: boolean;
 }
 
-export function ChatHost({ apiUrl, accessToken, user }: ChatHostProps): ReactElement {
+export function ChatHost({
+  apiUrl,
+  accessToken,
+  user,
+  sessionId,
+  forceNew,
+}: ChatHostProps): ReactElement {
   // Nginx routes /api/* to FastAPI (stripping the prefix). The SDK's paths
   // are bare (`/chat/sessions`), so the consumer hands it the /api-prefixed
   // base. See deployment_runbook.md.
@@ -49,6 +59,8 @@ export function ChatHost({ apiUrl, accessToken, user }: ChatHostProps): ReactEle
   return (
     <ChatWindow
       client={client}
+      sessionId={sessionId}
+      forceNew={forceNew}
       tenantId={user.tenant_id}
       actorId={user.id}
     />

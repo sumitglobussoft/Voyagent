@@ -67,6 +67,21 @@ export interface SessionSummary {
   actor_id: string;
   message_count: number;
   pending_approvals: PendingApprovalSummary[];
+  /** Auto-generated from the first user message (may be null). */
+  title?: string | null;
+}
+
+/** One row returned by `GET /chat/sessions` (list endpoint). */
+export interface SessionListItem {
+  id: string;
+  title: string | null;
+  created_at: string | null;
+  message_count: number;
+}
+
+/** Response body for `GET /chat/sessions`. */
+export interface SessionListResponse {
+  sessions: SessionListItem[];
 }
 
 /** Request body for `POST /chat/sessions/{id}/messages`. */

@@ -81,6 +81,7 @@ class _StubSession(BaseModel):
     pending_approvals: dict[str, _StubPendingApproval] = {}
     sse_last_event_id: int = 0
     sse_event_buffer: list[tuple[int, str]] = []
+    title: str | None = None
 
 
 class _StubStore:
@@ -374,6 +375,114 @@ def test_send_message_missing_body_returns_422(seeded_principal) -> None:
         # No json= and no content → FastAPI returns 422.
     )
     assert r2.status_code == 422, r2.text
+
+
+@pytest.mark.asyncio
+async def test_first_message_generates_title(seeded_principal) -> None:
+    """The first user message auto-populates session.title; GET exposes it."""
+    client = TestClient(app)
+    headers = _bearer(seeded_principal["token"])
+
+    r = client.post("/chat/sessions", json={}, headers=headers)
+    session_id = r.json()["session_id"]
+
+    # Before sending: title is None.
+    meta = client.get(f"/chat/sessions/{session_id}", headers=headers).json()
+    assert meta["title"] is None
+
+    long_msg = "Find me a Delhi to Dubai flight for next Friday around noon please"
+    with client.stream(
+        "POST",
+        f"/chat/sessions/{session_id}/messages",
+        json={"message": long_msg},
+        headers=headers,
+    ) as resp:
+        _ = _parse_sse_stream(resp.iter_text())
+
+    meta2 = client.get(f"/chat/sessions/{session_id}", headers=headers).json()
+    assert meta2["title"] is not None
+    # First 60 chars of the stripped message.
+    assert meta2["title"] == long_msg.strip()[:60]
+    assert len(meta2["title"]) == 60
+
+
+@pytest.mark.asyncio
+async def test_second_message_does_not_overwrite_title(seeded_principal) -> None:
+    """A subsequent message must not clobber the existing auto-title."""
+    client = TestClient(app)
+    headers = _bearer(seeded_principal["token"])
+
+    r = client.post("/chat/sessions", json={}, headers=headers)
+    session_id = r.json()["session_id"]
+
+    with client.stream(
+        "POST",
+        f"/chat/sessions/{session_id}/messages",
+        json={"message": "first message here"},
+        headers=headers,
+    ) as resp:
+        _parse_sse_stream(resp.iter_text())
+
+    meta = client.get(f"/chat/sessions/{session_id}", headers=headers).json()
+    first_title = meta["title"]
+    assert first_title == "first message here"
+
+    # Simulate the orchestrator having appended a turn to message_history
+    # so the "is first message?" check fails for the second call.
+    bundle = await chat_module._get_bundle()
+    session = await bundle.session_store.get(session_id)
+    assert session is not None
+    session.message_history = [{"role": "user", "content": "first message here"}]
+
+    with client.stream(
+        "POST",
+        f"/chat/sessions/{session_id}/messages",
+        json={"message": "totally different second message"},
+        headers=headers,
+    ) as resp:
+        _parse_sse_stream(resp.iter_text())
+
+    meta2 = client.get(
+        f"/chat/sessions/{session_id}", headers=headers
+    ).json()
+    assert meta2["title"] == first_title
+
+
+@pytest.mark.asyncio
+async def test_short_first_message_becomes_whole_title(seeded_principal) -> None:
+    """Sub-60-char messages are used verbatim (after strip)."""
+    client = TestClient(app)
+    headers = _bearer(seeded_principal["token"])
+    r = client.post("/chat/sessions", json={}, headers=headers)
+    session_id = r.json()["session_id"]
+
+    with client.stream(
+        "POST",
+        f"/chat/sessions/{session_id}/messages",
+        json={"message": "   hi there   "},
+        headers=headers,
+    ) as resp:
+        _parse_sse_stream(resp.iter_text())
+
+    meta = client.get(f"/chat/sessions/{session_id}", headers=headers).json()
+    assert meta["title"] == "hi there"
+
+
+def test_sessions_list_returns_title_field(seeded_principal) -> None:
+    """GET /chat/sessions returns a sessions array even if empty."""
+    client = TestClient(app)
+    headers = _bearer(seeded_principal["token"])
+    r = client.get("/chat/sessions", headers=headers)
+    assert r.status_code == 200
+    body = r.json()
+    assert "sessions" in body
+    assert isinstance(body["sessions"], list)
+    # Each row, when present, must carry the documented shape.
+    for item in body["sessions"]:
+        assert "id" in item
+        assert "title" in item
+        assert "created_at" in item
+        assert "message_count" in item
 
 
 @pytest.mark.asyncio

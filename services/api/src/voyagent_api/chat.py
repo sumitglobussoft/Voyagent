@@ -40,6 +40,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
+from .db import get_sessionmaker
 from .tenancy import TenantContext, get_tenant
 
 logger = logging.getLogger(__name__)
@@ -168,6 +169,18 @@ class SessionSummaryResponse(BaseModel):
     actor_id: str
     message_count: int
     pending_approvals: list[PendingApproval]
+    title: str | None = None
+
+
+class SessionListItem(BaseModel):
+    id: str
+    title: str | None = None
+    created_at: str | None = None
+    message_count: int = 0
+
+
+class SessionListResponse(BaseModel):
+    sessions: list[SessionListItem]
 
 
 class SendMessageRequest(BaseModel):
@@ -245,7 +258,111 @@ async def get_session(
         actor_id=session.actor_id,
         message_count=len(session.message_history),
         pending_approvals=pending,
+        title=getattr(session, "title", None),
     )
+
+
+def _derive_title(message: str) -> str | None:
+    """Return a title derived from the first user message.
+
+    Rule: strip, then take the first 60 chars. Empty/whitespace-only
+    messages yield ``None``.
+    """
+    if not message:
+        return None
+    cleaned = message.strip()
+    if not cleaned:
+        return None
+    if len(cleaned) <= 60:
+        return cleaned
+    return cleaned[:60]
+
+
+async def _persist_session_title(session_id: str, title: str) -> None:
+    """Best-effort UPDATE of ``sessions.title`` in Postgres.
+
+    Silently swallows failures — the in-memory session_store already
+    carries the title, and a missing row (e.g. tests with a stub
+    runtime that doesn't write through to SQL) shouldn't block the
+    turn from streaming.
+    """
+    try:
+        from sqlalchemy import text  # local import keeps test startup cheap
+
+        maker = get_sessionmaker()
+    except Exception:  # noqa: BLE001
+        return
+    try:
+        async with maker() as db:
+            await db.execute(
+                text(
+                    "UPDATE sessions SET title = :title "
+                    "WHERE id = :sid AND title IS NULL"
+                ),
+                {"title": title, "sid": session_id},
+            )
+            await db.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(
+            "chat.title.persist_failed session_id=%s err=%s",
+            session_id,
+            exc,
+        )
+
+
+@router.get("/sessions", response_model=SessionListResponse)
+async def list_sessions(
+    tenant_ctx: TenantContext = Depends(get_tenant),
+) -> SessionListResponse:
+    """List chat sessions for the current tenant, newest first.
+
+    Reads from the ``sessions`` SQL table rather than the in-memory
+    session_store so the sidebar stays populated across restarts.
+    Returns ``{id, title, created_at, message_count}`` for each row.
+    """
+    try:
+        from sqlalchemy import text
+
+        maker = get_sessionmaker()
+    except Exception:  # noqa: BLE001
+        return SessionListResponse(sessions=[])
+
+    items: list[SessionListItem] = []
+    try:
+        async with maker() as db:
+            rows = (
+                await db.execute(
+                    text(
+                        "SELECT s.id, s.title, s.created_at, "
+                        "COALESCE((SELECT COUNT(*) FROM messages m "
+                        "WHERE m.session_id = s.id), 0) AS msg_count "
+                        "FROM sessions s "
+                        "WHERE s.tenant_id = :tid "
+                        "ORDER BY s.created_at DESC "
+                        "LIMIT 200"
+                    ),
+                    {"tid": tenant_ctx.tenant_id},
+                )
+            ).all()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("chat.sessions.list_failed err=%s", exc)
+        return SessionListResponse(sessions=[])
+
+    for row in rows:
+        created_at = row[2]
+        items.append(
+            SessionListItem(
+                id=str(row[0]),
+                title=row[1],
+                created_at=(
+                    created_at.isoformat()
+                    if hasattr(created_at, "isoformat")
+                    else (str(created_at) if created_at is not None else None)
+                ),
+                message_count=int(row[3] or 0),
+            )
+        )
+    return SessionListResponse(sessions=items)
 
 
 @router.post("/sessions/{session_id}/messages")
@@ -280,6 +397,25 @@ async def send_message(
     AgentEventCls = runtime.AgentEvent
     AgentEventKind = runtime.AgentEventKind
     buffer_cap: int = getattr(runtime, "SSE_REPLAY_BUFFER_CAP", 200)
+
+    # --- Session-title auto-generation (first user message only) --------- #
+    # The check runs *before* the orchestrator appends the new user turn
+    # to ``message_history``, so ``len(...) == 0`` correctly identifies the
+    # first message. Non-empty ``approvals`` resume flows don't count.
+    existing_title = getattr(session, "title", None)
+    if (
+        existing_title in (None, "")
+        and body.message
+        and body.message.strip()
+        and len(getattr(session, "message_history", []) or []) == 0
+    ):
+        derived = _derive_title(body.message)
+        if derived:
+            try:
+                session.title = derived  # type: ignore[attr-defined]
+            except Exception:  # noqa: BLE001
+                pass
+            await _persist_session_title(session_id, derived)
 
     # Parse Last-Event-ID. Per the SSE spec, browsers auto-send it when
     # the EventSource reconnects; our SDK forwards an explicit header on

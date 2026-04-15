@@ -5,13 +5,13 @@
  *
  * Responsibilities:
  *   - Ensure a session exists (create one via the SDK if the caller didn't).
- *   - Render the message transcript, any pending approval, and the composer.
- *   - Thread the `useAgentStream` state into those children.
+ *   - Render the session header, transcript, pending approvals, and composer.
+ *   - Surface Stop-generating while a turn is streaming.
+ *   - Offer an empty-state with example prompts on a brand-new session.
  *
- * The component is client-only — it uses hooks and talks to the SDK over
- * fetch + SSE. Hosts render it from a Server Component via standard React
- * composition; Next.js handles the RSC boundary automatically because of
- * the `"use client"` pragma.
+ * Client-only — uses hooks and talks to the SDK over fetch + SSE. Hosts
+ * render it from a Server Component via standard React composition;
+ * Next.js handles the RSC boundary automatically because of `"use client"`.
  */
 import { useEffect, useState, type ReactElement } from "react";
 
@@ -19,7 +19,9 @@ import type { VoyagentClient } from "@voyagent/sdk";
 
 import { ApprovalPrompt } from "./ApprovalPrompt.web.js";
 import { ComposerBar } from "./ComposerBar.web.js";
+import { EmptyState } from "./EmptyState.web.js";
 import { MessageList } from "./MessageList.web.js";
+import { SessionHeader } from "./SessionHeader.web.js";
 import { useAgentStream } from "./useAgentStream.js";
 
 export interface ChatWindowProps {
@@ -31,12 +33,19 @@ export interface ChatWindowProps {
   sessionId?: string;
   tenantId: string;
   actorId: string;
+  /**
+   * When true, ignore `sessionId` and always mint a fresh session. Mirrors
+   * the `/chat?new=1` URL convention used by the web shell.
+   */
+  forceNew?: boolean;
 }
 
 export function ChatWindow(props: ChatWindowProps): ReactElement {
-  const { client, tenantId, actorId } = props;
+  const { client, tenantId, actorId, forceNew } = props;
   const [sessionId, setSessionId] = useState<string | null>(
-    props.sessionId && props.sessionId.length > 0 ? props.sessionId : null,
+    !forceNew && props.sessionId && props.sessionId.length > 0
+      ? props.sessionId
+      : null,
   );
   const [initError, setInitError] = useState<Error | null>(null);
 
@@ -92,6 +101,53 @@ function ChatBody({
   sessionId: string;
 }): ReactElement {
   const stream = useAgentStream({ client, sessionId });
+  const [seedText, setSeedText] = useState<string>("");
+  const [title, setTitle] = useState<string | null>(null);
+  const [createdAt, setCreatedAt] = useState<string | null>(null);
+
+  // Pull session metadata once on mount for the header strip. We
+  // deliberately skip re-fetching on every message — the title is
+  // generated server-side on the first message, so we poll after the
+  // first turn completes instead.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const summary = await client.getSession(sessionId);
+        if (cancelled) return;
+        setTitle(summary.title ?? null);
+        // `created_at` isn't on SessionSummary; fall back to "now" if the
+        // SDK ever starts returning it.
+        const anySummary = summary as unknown as { created_at?: string };
+        if (anySummary.created_at) setCreatedAt(anySummary.created_at);
+      } catch {
+        /* swallow — header gracefully renders "New chat". */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [client, sessionId]);
+
+  // After the first turn finishes streaming, refresh the session once so
+  // the header picks up the newly-generated title.
+  useEffect(() => {
+    if (stream.isStreaming) return;
+    if (title !== null) return;
+    if (stream.messages.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const summary = await client.getSession(sessionId);
+        if (!cancelled && summary.title) setTitle(summary.title);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [client, sessionId, stream.isStreaming, stream.messages.length, title]);
 
   const disabled = stream.isStreaming || stream.pendingApprovals.length > 0;
   const disabledReason = stream.isStreaming
@@ -101,10 +157,20 @@ function ChatBody({
       : undefined;
 
   const headApproval = stream.pendingApprovals[0];
+  const isEmpty = stream.messages.length === 0 && !stream.isStreaming;
 
   return (
     <div className="flex h-full flex-col bg-white text-neutral-900">
-      <MessageList messages={stream.messages} />
+      <SessionHeader title={title} createdAt={createdAt} />
+      {isEmpty ? (
+        <EmptyState onPick={(s) => setSeedText(s)} />
+      ) : (
+        <MessageList
+          messages={stream.messages}
+          isStreaming={stream.isStreaming}
+          onRegenerate={stream.regenerate}
+        />
+      )}
       {headApproval !== undefined ? (
         <ApprovalPrompt
           approval={headApproval}
@@ -120,10 +186,24 @@ function ChatBody({
           {stream.error.message}
         </div>
       ) : null}
+      {stream.isStreaming ? (
+        <div className="flex justify-center px-4 pb-2">
+          <button
+            type="button"
+            onClick={() => stream.stop()}
+            className="rounded border border-neutral-300 bg-white px-3 py-1.5 text-xs text-neutral-700 hover:bg-neutral-100"
+            data-testid="stop-generating"
+          >
+            Stop generating
+          </button>
+        </div>
+      ) : null}
       <ComposerBar
         disabled={disabled}
         disabledReason={disabledReason}
+        seedText={seedText}
         onSubmit={async (text: string) => {
+          setSeedText("");
           await stream.send(text);
         }}
       />

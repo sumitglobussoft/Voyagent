@@ -98,6 +98,50 @@ export async function apiPatch<T = unknown>(
 }
 
 /**
+ * Shape we hope to get back from ``GET /api/chat/sessions`` once that
+ * list endpoint exists. The sidebar consumes this; ``title`` is
+ * optional because the auto-title work is still in flight in another
+ * agent's scope and the current API only exposes single-session
+ * reads (``GET /api/chat/sessions/{id}``) rather than a list.
+ */
+export type ChatSessionListItem = {
+  id: string;
+  title?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  message_count?: number;
+};
+
+export type ChatSessionList = {
+  items: ChatSessionListItem[];
+  total?: number;
+};
+
+/**
+ * Fetch the recent chat sessions for the current tenant.
+ *
+ * NOTE: as of this writing the API exposes ``POST /chat/sessions`` and
+ * ``GET /chat/sessions/{id}`` but no list endpoint — a bare
+ * ``GET /chat/sessions`` will 404/405. The sidebar handles the failure
+ * by rendering the empty-state string. Once the backend lands the list
+ * endpoint, this call will start populating naturally. Flagged in the
+ * sidebar integration report.
+ */
+export async function listChatSessions(
+  limit = 30,
+): Promise<ChatSessionListItem[]> {
+  const res = await apiGet<ChatSessionList | ChatSessionListItem[]>(
+    `/api/chat/sessions?limit=${limit}`,
+  );
+  if (!res.ok || !res.data) return [];
+  if (Array.isArray(res.data)) return res.data.slice(0, limit);
+  if (Array.isArray((res.data as ChatSessionList).items)) {
+    return (res.data as ChatSessionList).items.slice(0, limit);
+  }
+  return [];
+}
+
+/**
  * Pull a string "detail" field out of an API error body, if present.
  * FastAPI errors look like `{ "detail": "approval_already_resolved" }`
  * so this covers most of what the API surfaces to us.

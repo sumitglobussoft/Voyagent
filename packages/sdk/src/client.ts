@@ -8,6 +8,7 @@ import type {
   AgentEvent,
   SendMessageInput,
   SessionCreateInput,
+  SessionListResponse,
   SessionSummary,
 } from "./chat.js";
 import { VoyagentApiError } from "./errors.js";
@@ -73,6 +74,11 @@ export class VoyagentClient {
       headers: { "Content-Type": "application/json" },
       body: "{}",
     });
+  }
+
+  /** GET /chat/sessions — list the authenticated tenant's chat sessions. */
+  async listSessions(): Promise<SessionListResponse> {
+    return this.#request<SessionListResponse>("/chat/sessions");
   }
 
   /** GET /chat/sessions/{id} — metadata (no message bodies). */

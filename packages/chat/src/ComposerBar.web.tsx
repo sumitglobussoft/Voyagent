@@ -7,6 +7,7 @@
  */
 import {
   useCallback,
+  useEffect,
   useState,
   type ChangeEvent,
   type FormEvent,
@@ -20,6 +21,13 @@ export interface ComposerBarProps {
   disabledReason?: string;
   onSubmit: (text: string) => void | Promise<void>;
   placeholder?: string;
+  /**
+   * Optional externally-provided seed text (e.g. from clicking an empty-state
+   * suggestion card). Whenever this changes to a non-empty value the composer
+   * replaces its current content. Auto-submit is intentionally NOT wired —
+   * the user still has to hit Send.
+   */
+  seedText?: string;
 }
 
 export function ComposerBar(props: ComposerBarProps): ReactElement {
@@ -28,8 +36,13 @@ export function ComposerBar(props: ComposerBarProps): ReactElement {
     disabledReason,
     onSubmit,
     placeholder = "Message the agent...",
+    seedText,
   } = props;
   const [value, setValue] = useState("");
+
+  useEffect(() => {
+    if (seedText && seedText.length > 0) setValue(seedText);
+  }, [seedText]);
 
   const submit = useCallback(
     async (e?: FormEvent<HTMLFormElement>) => {

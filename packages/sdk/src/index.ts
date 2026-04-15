@@ -22,6 +22,8 @@ export type {
   PendingApprovalSummary,
   SendMessageInput,
   SessionCreateInput,
+  SessionListItem,
+  SessionListResponse,
   SessionSummary,
 } from "./chat.js";
 export type * from "./types.js";
