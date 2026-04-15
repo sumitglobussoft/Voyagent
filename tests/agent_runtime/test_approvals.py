@@ -191,11 +191,15 @@ async def test_approval_granted_then_revoked_replay_short_circuits(
     )
     assert second.kind == "success"
 
-    # A fresh call with cleared approvals must request a new approval id,
-    # not silently re-use the old one.
+    # A fresh call with cleared approvals re-requests approval.
+    # contract changed — approval ids are now deterministic in (turn_id, tool_name)
+    # (see tools._approval_id_for: "Stable approval id so the same tool call in
+    # a retry keeps the id"), so a same-turn re-invocation reuses the id. The
+    # invariant this test actually needs is that a cleared approval map
+    # short-circuits back to ``approval_needed`` rather than silently running.
     tool_context.approvals = {}
     third = await invoke_tool(
         "issue_ticket", {"pnr_id": "PNR-RESEAT"}, tool_context, audit_sink=sink
     )
     assert third.kind == "approval_needed"
-    assert third.approval_id != first_id
+    assert third.approval_id == first_id

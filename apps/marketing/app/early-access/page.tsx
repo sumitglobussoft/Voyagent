@@ -68,8 +68,17 @@ export default function EarlyAccessPage() {
               </h2>
               <ul className="mt-3 space-y-2 text-sm leading-relaxed">
                 <li>
-                  Independent travel agencies in India running Amadeus or
-                  Sabre plus Tally, Zoho Books, or Busy.
+                  Independent travel agencies in India running Amadeus and
+                  Tally today. The v0 pilot scope is Amadeus (sandbox) plus
+                  Tally&apos;s XML protocol layer; additional GDS and
+                  accounting drivers are on the roadmap — see{" "}
+                  <Link
+                    href="/integrations"
+                    className="font-medium text-primary hover:underline"
+                  >
+                    /integrations
+                  </Link>
+                  .
                 </li>
                 <li>
                   Teams that handle the full ticketing + hotel + visa +

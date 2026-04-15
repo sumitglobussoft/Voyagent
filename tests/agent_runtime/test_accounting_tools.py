@@ -214,12 +214,16 @@ def accounting_registry(
 def accounting_ctx(
     stub_tenant_id: str, accounting_registry: DriverRegistry
 ) -> ToolContext:
+    # contract changed — RBAC short-circuit now runs before the approval gate
+    # (tools.py). Default role must satisfy approval_roles on post_journal_entry
+    # / create_invoice so approval-gate tests see ``approval_needed`` first.
     return ToolContext(
         tenant_id=stub_tenant_id,
         actor_id=_uuid7_like(),
         actor_kind=ActorKind.HUMAN,
         session_id=_uuid7_like(),
         turn_id="t-acct-000001",
+        actor_role="accountant",
         approvals={},
         extensions={DRIVER_REGISTRY_KEY: accounting_registry},
     )

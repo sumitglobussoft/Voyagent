@@ -25,27 +25,84 @@ pnpm --filter @voyagent/mobile start
 That prints a QR code. Scan it with Expo Go (same Wi-Fi network), or
 press `a` / `i` in the terminal to launch an Android / iOS simulator.
 
+## Running on a device
+
+First-time setup, from the repo root:
+
+```bash
+# Install the full workspace (mobile pulls @voyagent/{core,sdk,chat}).
+pnpm install
+
+# The mobile app consumes built type declarations from the workspace
+# packages, so build them once:
+pnpm --filter @voyagent/core --filter @voyagent/sdk --filter @voyagent/chat run build
+
+# Optional: type-check the mobile app.
+pnpm --filter @voyagent/mobile lint
+```
+
+Create `apps/mobile/.env` from `.env.example`. The only variable that
+matters day-to-day is `EXPO_PUBLIC_VOYAGENT_API_URL`. The default
+fallback in `lib/sdk.ts` / `lib/auth.tsx` is `http://localhost:8000`,
+which a phone on a different network can't reach.
+
+- Local FastAPI on your laptop (phone on same Wi-Fi): set it to
+  `http://<your-laptop-lan-ip>:8000`.
+- Live demo environment: set it to `https://voyagent.globusdemos.com`.
+
+Launch the Expo dev server:
+
+```bash
+pnpm --filter @voyagent/mobile start
+# then:
+#   - scan the QR with Expo Go (iOS) or the Expo Go app (Android), OR
+#   - press `i` to open the iOS simulator (requires Xcode on macOS), OR
+#   - press `a` to open an Android emulator (requires Android Studio).
+```
+
+Demo account for the live API:
+
+- email: `demo@voyagent.globusdemos.com`
+- password: `DemoPassword123!`
+
+What works end-to-end against the live demo API today:
+
+- Sign-up / sign-in via `/api/auth/*` (cookie-free, stored in SecureStore).
+- Session hydration on app launch with pre-emptive JWT refresh.
+- Chat tab (`@voyagent/chat`'s RN build, streaming via the SDK).
+- Sign-out clears the token store.
+
+What is still stubbed:
+
+- Reports tab (`app/index.tsx`) — placeholder copy.
+- Desktop pair tab (`app/desktop-pair.tsx`) — QR scanner not wired.
+
+### Known limitations / gotchas
+
+- `expo-secure-store` only works on a real device or simulator — **not**
+  in `expo start --web`. The Expo web bundle will throw on auth
+  hydration; don't use the web target for smoke-testing mobile auth.
+- Icon / splash PNGs are not committed (see Assets below). Expo falls
+  back to placeholders during `expo start`, which is fine for dev; a
+  real `eas build` needs actual assets.
+- iOS production builds will need `ios.bundleIdentifier` to match an
+  Apple Developer Team & signing profile in `eas.json` — not yet
+  configured here.
+- No `eas.json` is committed; `eas build` is out of scope for the
+  current skeleton.
+
 ## Tabs
 
 Three tabs ship today, all intentionally thin:
 
 - **Reports** (`app/index.tsx`) — a placeholder. v1 will pull receivables,
   payables, and itinerary summaries from the Voyagent API.
-- **Chat** (`app/chat.tsx`) — a placeholder. `@voyagent/chat` is
-  web-first (Tailwind + DOM primitives) and needs an RN adaptation
-  before it renders here. In the meantime the screen points users at
-  desktop pairing.
+- **Chat** (`app/chat.tsx`) — renders `@voyagent/chat`'s React Native
+  build. Metro's platform-extension resolution picks `ChatWindow.native.tsx`
+  via the `react-native` conditional export in the package's `exports`
+  map; DOM/Tailwind never load on the device.
 - **Pair** (`app/desktop-pair.tsx`) — a placeholder. Eventually scans a
   QR code from the desktop shell to establish a remote-control channel.
-
-## Why chat is a placeholder
-
-The shared `@voyagent/chat` components currently depend on the DOM and
-Tailwind utility classes. Porting them to React Native means swapping
-`<div>` for `<View>`, Tailwind for Tamagui tokens (see `docs/STACK.md`),
-and replacing the SSE implementation with one that uses RN's fetch +
-polyfills. That's a distinct workstream — it's intentionally out of scope
-for this skeleton.
 
 ## Desktop pairing
 
@@ -91,9 +148,10 @@ which decodes the JWT `exp` and refreshes pre-emptively when within 30s.
 
 ## Known limitations
 
-- No real chat rendering — `@voyagent/chat` needs RN adaptation first.
 - No real pairing — QR scanner stubbed.
+- Reports tab is a placeholder.
 - Icon / splash PNGs not generated.
+- Not validated on a real device yet (no `eas build` run).
 
 ## Scripts
 

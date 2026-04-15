@@ -179,7 +179,11 @@ async def test_approval_path_pauses_turn(
         driver_registry=driver_registry,
     )
 
-    events = await _collect(orchestrator.run_turn(make_session(), "issue it"))
+    # contract changed — RBAC short-circuit runs before the approval gate; pass
+    # actor_role so issue_ticket's approval_roles check lets the approval through.
+    events = await _collect(
+        orchestrator.run_turn(make_session(), "issue it", actor_role="agency_admin")
+    )
     kinds = [ev.kind for ev in events]
     assert AgentEventKind.APPROVAL_REQUEST in kinds
     assert kinds[-1] is AgentEventKind.FINAL

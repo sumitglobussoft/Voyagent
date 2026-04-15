@@ -170,11 +170,14 @@ async def test_domain_tool_raising_driver_error_is_captured_as_audit_and_error(
             )
             # Domain agent translates the failed outcome into a TOOL_RESULT
             # event with an error payload; the loop does not crash.
+            # contract changed — AgentEvent (events.py) now requires tool_call_id
+            # on TOOL_RESULT events.
             yield AgentEvent(
                 kind=AgentEventKind.TOOL_RESULT,
                 session_id=request.session.id,
                 turn_id=request.tool_context.turn_id,
                 tool_name=tool_name,
+                tool_call_id="toolu_boom",
                 tool_output={"error": outcome.error_message or "unknown"},
             )
 

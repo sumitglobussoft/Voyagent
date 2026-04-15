@@ -4,6 +4,8 @@ import { ChatWindow } from "@voyagent/chat";
 
 import { AuthProvider, useAuth } from "./auth/AuthProvider.js";
 import { SignInScreen } from "./auth/SignInScreen.js";
+import { ReportsTab } from "./tabs/ReportsTab.js";
+import { SettingsTab } from "./tabs/SettingsTab.js";
 import { Updater } from "./Updater.js";
 import { actorId, tenantId, useVoyagentClient } from "./sdk.js";
 
@@ -165,14 +167,9 @@ function Shell(): ReactElement {
           role="tabpanel"
           aria-labelledby="tab-reports"
           hidden={active !== "reports"}
-          style={{ padding: 24 }}
+          style={{ height: "100%" }}
         >
-          <h2 style={{ marginTop: 0 }}>Reports</h2>
-          <p style={{ color: "#666" }}>
-            Reports are coming soon. This tab will surface Tally-driven
-            receivables, payables, and itinerary summaries once the desktop
-            Tally sidecar ships.
-          </p>
+          {active === "reports" ? <ReportsTab /> : null}
         </section>
 
         <section
@@ -180,14 +177,9 @@ function Shell(): ReactElement {
           role="tabpanel"
           aria-labelledby="tab-settings"
           hidden={active !== "settings"}
-          style={{ padding: 24 }}
+          style={{ height: "100%" }}
         >
-          <h2 style={{ marginTop: 0 }}>Settings</h2>
-          <p style={{ color: "#666" }}>
-            Settings are coming soon. This will host preferences, driver
-            configuration (Tally ODBC, GDS terminals, printers), and account
-            management.
-          </p>
+          {active === "settings" ? <SettingsTab /> : null}
         </section>
       </main>
 

@@ -255,7 +255,7 @@ export default function LandingPage() {
             href="/domains/ticketing-visa"
             icon={Plane}
             bullets={[
-              "Fare search across Amadeus, Sabre, Travelport and consolidators",
+              "Fare search on Amadeus today; additional GDS support planned behind the same driver interface",
               "PNR lifecycle, queue handling, ticket issuance",
               "Visa checklist, form fill, appointment, status tracking",
               "Schedule changes, cancellations, refunds",

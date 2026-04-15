@@ -80,25 +80,14 @@ export const DOC_TITLES: Record<DocSlug, string> = {
   ACTIVITIES: "Activity inventory",
 };
 
+// Convention: INTEGRATION_LABELS only lists vendors with a live driver or
+// protocol layer on main today. Planned / roadmap vendors are deliberately
+// excluded so the marquee never implies a relationship we don't have.
 export const INTEGRATION_LABELS = [
   "Amadeus",
-  "Sabre",
-  "Travelport",
   "TBO",
-  "Riya",
   "Tally",
-  "Zoho Books",
-  "Busy",
-  "QuickBooks",
-  "SAP",
-  "SAP B1",
-  "Hotelbeds",
+  "BSP India",
   "VFS Global",
-  "BLS",
-  "BSPlink",
-  "Razorpay",
-  "Stripe",
-  "NEFT",
-  "UPI",
-  "RTGS",
+  "Anthropic",
 ] as const;

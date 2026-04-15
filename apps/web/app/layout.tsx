@@ -70,6 +70,12 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
               >
                 Approvals
               </Link>
+              <Link
+                href="/audit"
+                style={{ color: "#111", textDecoration: "none" }}
+              >
+                Audit
+              </Link>
             </nav>
           ) : null}
           <div style={{ display: "flex", alignItems: "center", gap: 16, fontSize: 14 }}>

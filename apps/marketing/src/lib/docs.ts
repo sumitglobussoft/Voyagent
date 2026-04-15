@@ -13,17 +13,18 @@ import { DOC_SLUGS, type DocSlug } from "./site";
  *
  * The path is resolved relative to `process.cwd()` which, for a Next.js
  * standalone build, points at the `apps/marketing` directory. We walk two
- * levels up to reach the repo's `docs/` folder. Docker packaging copies
- * the `docs/` directory alongside the standalone output (handled by the
- * deployment agent's `COPY docs ./docs` instruction).
+ * levels up to reach the repo's `docs/` folder. For the production
+ * systemd deployment (migrated off Docker 2026-04-14), the deploy script
+ * rsyncs `docs/` next to the standalone server output, so the second and
+ * third candidates below resolve against that sibling directory.
  */
 const DOCS_DIR_CANDIDATES = [
   // running from apps/marketing at dev time
   path.resolve(process.cwd(), "..", "..", "docs"),
   // running from repo root
   path.resolve(process.cwd(), "docs"),
-  // standalone bundle sibling (deployment agent copies docs next to
-  // the standalone server)
+  // standalone bundle sibling (systemd deploy rsyncs docs next to the
+  // standalone server)
   path.resolve(process.cwd(), "docs"),
 ];
 

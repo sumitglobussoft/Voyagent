@@ -305,6 +305,11 @@ def driver_registry(stub_amadeus: StubAmadeus) -> DriverRegistry:
 def tool_context(
     make_session: Callable[..., Session], driver_registry: DriverRegistry
 ) -> ToolContext:
+    # contract changed — RBAC short-circuit now runs before the approval gate
+    # (tools.py: comment at ``# 2. RBAC — short-circuit BEFORE the approval gate``).
+    # Default role must satisfy the approval_roles on ``issue_ticket`` so tests
+    # that exercise the approval gate see ``approval_needed`` rather than
+    # ``permission_denied``. RBAC-specific tests pass an explicit actor_role.
     sess = make_session()
     return ToolContext(
         tenant_id=sess.tenant_id,
@@ -312,6 +317,7 @@ def tool_context(
         actor_kind=ActorKind.HUMAN,
         session_id=sess.id,
         turn_id="t-testturn000",
+        actor_role="agency_admin",
         approvals={},
         extensions={DRIVER_REGISTRY_KEY: driver_registry},
     )

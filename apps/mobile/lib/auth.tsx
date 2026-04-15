@@ -50,8 +50,9 @@ function base64UrlDecode(segment: string): string {
 export function jwtExpMs(token: string): number {
   try {
     const parts = token.split(".");
-    if (parts.length < 2) return 0;
-    const payload = JSON.parse(base64UrlDecode(parts[1])) as { exp?: number };
+    const body = parts[1];
+    if (!body) return 0;
+    const payload = JSON.parse(base64UrlDecode(body)) as { exp?: number };
     if (typeof payload.exp !== "number") return 0;
     return payload.exp * 1000;
   } catch {

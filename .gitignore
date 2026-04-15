@@ -70,3 +70,4 @@ logs/
 tmp/
 temp/
 deploy_native.py
+.claude/

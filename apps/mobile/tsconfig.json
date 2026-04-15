@@ -11,6 +11,6 @@
     "isolatedModules": true,
     "skipLibCheck": true
   },
-  "include": ["app/**/*", "lib/**/*", "app.json"],
+  "include": ["app/**/*", "lib/**/*", "app.json", "env.d.ts"],
   "exclude": ["node_modules", ".expo", "dist"]
 }

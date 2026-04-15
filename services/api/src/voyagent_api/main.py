@@ -23,7 +23,7 @@ from schemas.canonical import Money
 
 from voyagent_api import chat
 from voyagent_api.approvals import router as approvals_router
-from voyagent_api.audit import record_auth_failure
+from voyagent_api.audit import record_auth_failure, router as audit_router
 from voyagent_api.auth_inhouse.routes import router as auth_router
 from voyagent_api.enquiries import router as enquiries_router
 from voyagent_api.reports import router as reports_router
@@ -67,6 +67,7 @@ app.include_router(auth_router)
 app.include_router(reports_router)
 app.include_router(approvals_router)
 app.include_router(enquiries_router)
+app.include_router(audit_router)
 
 
 # --------------------------------------------------------------------------- #

@@ -79,7 +79,10 @@ async def test_two_tenants_get_distinct_registries(
     built = _install_fake_builder(monkeypatch)
 
     async def _resolver(tenant_id: str, provider: str) -> dict[str, Any] | None:
-        assert provider == "amadeus"
+        # contract changed — _build_for now resolves multiple providers (amadeus,
+        # tbo, ...); unknown providers return None so the registry skips them.
+        if provider != "amadeus":
+            return None
         return {
             "client_id": f"cid-for-{tenant_id}",
             "client_secret": f"sec-for-{tenant_id}",
