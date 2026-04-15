@@ -17,6 +17,7 @@
     "@voyagent/chat": "workspace:*",
     "@voyagent/config": "workspace:*",
     "@voyagent/core": "workspace:*",
+    "@voyagent/icons": "workspace:*",
     "@voyagent/sdk": "workspace:*"
   },
   "devDependencies": {
