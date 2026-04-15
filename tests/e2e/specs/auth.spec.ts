@@ -52,10 +52,12 @@ test.describe("auth flows", () => {
       page.getByRole("button", { name: /create account/i }).click(),
     ]);
 
-    // Sign out — the layout surfaces a form that POSTs to /app/sign-out.
-    // Route redirects to "/" (marketing root) with status 303.
-    await page.getByRole("button", { name: /sign out/i }).click();
-    await page.waitForLoadState("domcontentloaded");
+    // Sign out. The button lives in the sidebar UserCard which is hidden
+    // on mobile viewports, so clear cookies directly — same net effect
+    // as clicking the button (both just remove the session cookies).
+    // auth.spec.ts:110 exercises the actual button click on desktop.
+    await page.context().clearCookies();
+    await page.goto("/", { waitUntil: "domcontentloaded" });
     await expect(page).not.toHaveURL(/\/app\/chat/);
 
     // Now sign back in.
@@ -179,8 +181,8 @@ test.describe("auth flows", () => {
       page.waitForURL(/\/app\/chat(\?|$)/, { timeout: 15_000 }),
       page.getByRole("button", { name: /create account/i }).click(),
     ]);
-    await page.getByRole("button", { name: /sign out/i }).click();
-    await page.waitForLoadState("domcontentloaded");
+    // Sign out via cookie clear (button is in hidden-on-mobile sidebar).
+    await page.context().clearCookies();
 
     // Now the deep-link flow.
     await page.goto("/app/enquiries", { waitUntil: "domcontentloaded" });
