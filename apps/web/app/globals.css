@@ -1,0 +1,33 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Smooth scrolling for the chat transcript + other long lists. */
+html {
+  scroll-behavior: smooth;
+}
+
+/* The chat transcript uses a min-height-0 hack to let flex children shrink;
+   give scrollable columns a sane default overflow so content never escapes
+   their containers. */
+.voyagent-scroll-y {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Subtle custom scrollbar — just on desktop. */
+@media (min-width: 768px) {
+  .voyagent-scroll-y::-webkit-scrollbar {
+    width: 10px;
+  }
+  .voyagent-scroll-y::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.15);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  .voyagent-scroll-y::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.25);
+    background-clip: padding-box;
+  }
+}

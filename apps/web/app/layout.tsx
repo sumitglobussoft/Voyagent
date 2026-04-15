@@ -1,12 +1,14 @@
 /**
  * Root layout.
  *
- * Deliberately minimal — just the HTML shell plus the font/background
- * defaults. The actual chrome (sidebar for authenticated routes, top
- * bar for public routes) lives in the route-group layouts under
- * ``(authed)/layout.tsx`` and ``(public)/layout.tsx``.
+ * Deliberately minimal — just the HTML shell, Tailwind base styles, and
+ * the font defaults. The actual chrome (sidebar for authenticated
+ * routes, top bar for public routes) lives in the route-group layouts
+ * under ``(authed)/layout.tsx`` and ``(public)/layout.tsx``.
  */
 import type { ReactNode } from "react";
+
+import "./globals.css";
 
 export const metadata = {
   title: "Voyagent",
@@ -16,7 +18,7 @@ export const metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <body style={{ margin: 0, fontFamily: "system-ui, sans-serif", background: "#fafafa" }}>
+      <body className="bg-neutral-50 font-sans text-neutral-900 antialiased">
         {children}
       </body>
     </html>
