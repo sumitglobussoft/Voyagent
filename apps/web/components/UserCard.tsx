@@ -27,15 +27,17 @@ function initials(user: PublicUser): string {
   return ((first[0] ?? "") + (last[0] ?? "")).toUpperCase();
 }
 
-const ROLE_COLORS: Record<string, { bg: string; fg: string; border: string }> = {
+type RoleChip = { bg: string; fg: string; border: string };
+const VIEWER_CHIP: RoleChip = { bg: "#f3f4f6", fg: "#374151", border: "#e5e7eb" };
+const ROLE_COLORS: Record<string, RoleChip> = {
   owner: { bg: "#ede9fe", fg: "#5b21b6", border: "#ddd6fe" },
   admin: { bg: "#dbeafe", fg: "#1e40af", border: "#bfdbfe" },
   agent: { bg: "#dcfce7", fg: "#166534", border: "#bbf7d0" },
-  viewer: { bg: "#f3f4f6", fg: "#374151", border: "#e5e7eb" },
+  viewer: VIEWER_CHIP,
 };
 
-function roleColors(role: string): { bg: string; fg: string; border: string } {
-  return ROLE_COLORS[role.toLowerCase()] ?? ROLE_COLORS.viewer;
+function roleColors(role: string): RoleChip {
+  return ROLE_COLORS[role.toLowerCase()] ?? VIEWER_CHIP;
 }
 
 export function UserCard({ user }: { user: PublicUser }): ReactElement {
