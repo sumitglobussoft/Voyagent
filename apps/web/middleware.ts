@@ -43,8 +43,18 @@ export function middleware(req: NextRequest) {
     : pathname;
 
   // Public sub-routes inside the gated app — let through.
-  if (stripped === "/sign-in" || stripped.startsWith("/sign-in/") ||
-      stripped === "/sign-up" || stripped.startsWith("/sign-up/")) {
+  const publicPrefixes = [
+    "/sign-in",
+    "/sign-up",
+    "/forgot-password",
+    "/reset-password",
+    "/accept-invite",
+  ];
+  if (
+    publicPrefixes.some(
+      (p) => stripped === p || stripped.startsWith(p + "/"),
+    )
+  ) {
     return NextResponse.next();
   }
 
