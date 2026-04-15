@@ -33,12 +33,23 @@ test.describe("marketing landing", () => {
   });
 
   test("hero has primary CTA linking to /product", async ({ page }) => {
-    const cta = page.getByRole("link", { name: /explore the product/i });
+    // The hero's primary CTA reads "See the product" and points at /product.
+    const cta = page
+      .getByRole("link", { name: /see the product/i })
+      .first();
     await expect(cta).toBeVisible();
     await expect(cta).toHaveAttribute("href", "/product");
   });
 
-  test("nav bar contains core links", async ({ page }) => {
+  test("nav bar contains core links", async ({ page, isMobile }) => {
+    // The Primary nav is hidden below md: on the mobile breakpoint the
+    // layout collapses into a hamburger that opens a <nav aria-label="Mobile">.
+    // We only assert the desktop primary nav here; mobile gets a dedicated
+    // assertion.
+    test.skip(
+      isMobile === true,
+      "primary nav is hidden below md; mobile menu is asserted separately",
+    );
     const nav = page.getByRole("navigation", { name: /primary/i });
     for (const label of NAV_LABELS) {
       await expect(nav.getByRole("link", { name: label })).toBeVisible();
@@ -66,14 +77,17 @@ test.describe("marketing landing", () => {
 
   test("stat band shows all six stats", async ({ page }) => {
     // The STATS array on the landing page has exactly six entries. We
-    // pin this count to catch accidental deletions.
+    // pin this count to catch accidental deletions. Labels come from the
+    // descriptive copy under each stat value (not the value itself, which
+    // varies: "3", "SSE", "Approvals", "Double-entry", "Per-tenant",
+    // "~750 tests").
     const statLabels = [
-      /functional domains/i,
-      /activities automated/i,
-      /vendor-agnostic/i,
-      /india-first/i,
-      /per-tenant/i,
-      /every side-effect/i,
+      /domain agents live/i,
+      /streaming chat/i,
+      /web inbox for finance/i,
+      /ledger enforced/i,
+      /credentials and data/i,
+      /python \+ typescript/i,
     ];
     for (const label of statLabels) {
       await expect(page.getByText(label).first()).toBeVisible();

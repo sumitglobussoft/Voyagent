@@ -360,6 +360,78 @@ def test_invalid_actor_id_returns_422(client: TestClient) -> None:
     assert r.status_code == 422
 
 
+# --------------------------------------------------------------------------- #
+# RBAC — admin-only                                                           #
+# --------------------------------------------------------------------------- #
+
+
+def _mint_non_admin_token(
+    *, user_id: str, tenant_id: str, email: str, role: str = "agent"
+) -> str:
+    """Mint a valid access JWT with a non-admin role.
+
+    The sign-up helper always creates the first user in a tenant as
+    ``agency_admin`` (by design — the agency's creator is the admin), so
+    to exercise the 403 path we mint a token directly via the same
+    ``issue_access_token`` helper the auth router uses. This keeps the
+    test self-contained without needing an invite flow that doesn't yet
+    exist.
+    """
+    from voyagent_api.auth_inhouse.tokens import issue_access_token
+
+    token, _exp, _jti = issue_access_token(
+        user_id=user_id,
+        tenant_id=tenant_id,
+        email=email,
+        role=role,
+    )
+    return token
+
+
+def test_non_admin_gets_403_forbidden_role(client: TestClient) -> None:
+    signup = _sign_up(client, email="alice@a.com", agency="A")
+    non_admin_token = _mint_non_admin_token(
+        user_id=signup["user"]["id"],
+        tenant_id=signup["user"]["tenant_id"],
+        email="alice@a.com",
+        role="agent",
+    )
+
+    r = client.get("/audit", headers=_auth_headers(non_admin_token))
+    assert r.status_code == 403
+    assert r.json()["detail"] == "forbidden_role"
+
+
+def test_accountant_also_gets_403(client: TestClient) -> None:
+    """Finance / ops roles see ``forbidden_role`` too — principle of
+    least privilege: only agency admins read the audit log."""
+    signup = _sign_up(client, email="alice@a.com", agency="A")
+    token = _mint_non_admin_token(
+        user_id=signup["user"]["id"],
+        tenant_id=signup["user"]["tenant_id"],
+        email="alice@a.com",
+        role="accounting_lead",
+    )
+    r = client.get("/audit", headers=_auth_headers(token))
+    assert r.status_code == 403
+    assert r.json()["detail"] == "forbidden_role"
+
+
+def test_admin_can_still_read(client: TestClient) -> None:
+    """The sign-up helper creates ``agency_admin``; that token still
+    reads /audit successfully after the RBAC gate."""
+    signup = _sign_up(client, email="alice@a.com", agency="A")
+    r = client.get("/audit", headers=_auth_headers(signup["access_token"]))
+    assert r.status_code == 200
+
+
+def test_missing_token_is_401_not_403(client: TestClient) -> None:
+    """The ``forbidden_role`` 403 path must be distinct from the 401
+    ``unauthorized`` path so the UI can show a meaningful message."""
+    r = client.get("/audit")
+    assert r.status_code == 401
+
+
 def test_limit_out_of_range_returns_422(client: TestClient) -> None:
     signup = _sign_up(client, email="alice@a.com", agency="A")
     # The route caps ``limit`` at 200; 201 should trip FastAPI's

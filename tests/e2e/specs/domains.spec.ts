@@ -17,7 +17,10 @@ const DOMAINS = [
   },
   {
     path: "/domains/accounting",
-    headingRegex: /account|invoice|ledger|reconcil/i,
+    // Heading copy post-rewrite: "Double-entry discipline, driven from
+    // chat." Sub-sections include "Live today" and "Shipping next".
+    headingRegex:
+      /double-entry|account|invoice|ledger|reconcil|live today|shipping next/i,
   },
 ] as const;
 

@@ -31,7 +31,7 @@ from schemas.canonical import (
     Passenger,
     PassengerType,
 )
-from schemas.storage import PassengerRow
+from schemas.storage import PassengerRow, uuid7
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -241,7 +241,7 @@ class StoragePassengerResolver:
         we fall back to a select-then-insert/update portable path.
         """
         tid = _to_uuid(tenant_id)
-        new_id = _to_uuid(passenger_id) if passenger_id is not None else uuid.uuid4()
+        new_id = _to_uuid(passenger_id) if passenger_id is not None else uuid7()
 
         values = {
             "tenant_id": tid,

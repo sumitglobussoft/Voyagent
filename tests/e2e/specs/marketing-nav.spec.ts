@@ -51,9 +51,24 @@ test.describe("marketing nav routes", () => {
     });
   }
 
-  test("top nav sign-in CTA points at /app", async ({ page }) => {
+  test("top nav sign-in CTA points at /app/sign-in", async ({
+    page,
+    isMobile,
+  }) => {
+    // The top nav exposes a "Sign in" link that routes straight to the
+    // auth surface at /app/sign-in (rather than bouncing through /app).
+    // On the mobile breakpoint the nav collapses behind a hamburger and
+    // the link markup is inside a hidden <div id="mobile-nav"> — we open
+    // it first so the link becomes visible.
     await page.goto("/");
-    const signIn = page.getByRole("link", { name: /^sign in$/i }).first();
-    await expect(signIn).toHaveAttribute("href", "/app");
+    if (isMobile) {
+      await page
+        .getByRole("button", { name: /open menu/i })
+        .click();
+    }
+    const signIn = page
+      .getByRole("link", { name: /^sign in$/i })
+      .first();
+    await expect(signIn).toHaveAttribute("href", "/app/sign-in");
   });
 });

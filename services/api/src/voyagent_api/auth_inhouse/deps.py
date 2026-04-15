@@ -158,6 +158,28 @@ async def get_current_access_payload(
         ) from exc
 
 
+async def require_agency_admin(
+    principal: AuthenticatedPrincipal = Depends(get_current_principal),
+) -> AuthenticatedPrincipal:
+    """FastAPI dependency — require ``role == "agency_admin"`` on the caller.
+
+    Wraps :func:`get_current_principal`. Returns the principal unchanged
+    when the check passes; raises 403 ``forbidden_role`` when it fails.
+    Used by admin-only read surfaces (e.g. ``/audit``) to enforce the
+    principle of least privilege — finance / ops staff don't need to
+    see other staff's actions.
+
+    Distinct from 401 ``unauthorized`` so the UI can tell "you aren't
+    signed in" apart from "you're signed in but lack the role".
+    """
+    if principal.role != "agency_admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="forbidden_role",
+        )
+    return principal
+
+
 async def get_current_user(
     principal: AuthenticatedPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(db_session),
@@ -205,4 +227,5 @@ __all__ = [
     "get_current_principal",
     "get_current_principal_optional",
     "get_current_user",
+    "require_agency_admin",
 ]

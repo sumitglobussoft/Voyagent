@@ -27,12 +27,15 @@ test.describe("docs pages", () => {
       ).toBeGreaterThan(500);
 
       // The docs layout renders a sidebar link list containing every
-      // slug. We match by visible label rather than slug literal so the
-      // sidebar can pretty-print titles.
+      // slug. Scope the locator to the <aside aria-label="Docs
+      // navigation"> so we don't accidentally select the top-nav "Docs"
+      // link (which is hidden below md:) or the collapsed mobile-nav
+      // entry inside a <details>.
+      const sidebar = page.getByRole("complementary", {
+        name: /docs navigation/i,
+      });
       for (const other of DOC_SLUGS) {
-        const link = page
-          .locator(`a[href="/docs/${other}"]`)
-          .first();
+        const link = sidebar.locator(`a[href="/docs/${other}"]`).first();
         await expect(link).toBeVisible();
       }
     });

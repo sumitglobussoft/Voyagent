@@ -20,8 +20,9 @@ Read surface
 tenant-isolated view of the ``audit_events`` table for the web UI.
 Tenant isolation is enforced by the SQL ``WHERE`` clause (the tenant
 id comes from the caller's verified JWT, never from a query param).
-Every authenticated user in a tenant may read that tenant's audit
-log today — there is no admin-only gate yet.
+The route is gated behind :func:`require_agency_admin` — finance /
+ops staff should not see other staff's actions; only agency admins
+read the audit log.
 """
 
 from __future__ import annotations
@@ -46,7 +47,7 @@ from schemas.storage.user import User
 from .auth_inhouse.deps import (
     AuthenticatedPrincipal,
     db_session,
-    get_current_principal,
+    require_agency_admin,
 )
 
 logger = logging.getLogger(__name__)
@@ -398,13 +399,15 @@ async def list_audit_events(
     date_to: date | None = Query(None, alias="to"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    principal: AuthenticatedPrincipal = Depends(get_current_principal),
+    principal: AuthenticatedPrincipal = Depends(require_agency_admin),
     db: AsyncSession = Depends(db_session),
 ) -> AuditListResponse:
     """List audit events for the caller's tenant, most-recent-first.
 
-    Tenant isolation is enforced on every query by filtering on the
-    principal's ``tenant_id`` — callers never pass a tenant id.
+    Gated behind :func:`require_agency_admin` — only users with role
+    ``agency_admin`` may read their tenant's audit log. Tenant isolation
+    is enforced on every query by filtering on the principal's
+    ``tenant_id`` — callers never pass a tenant id.
     """
     tenant_uuid = _tenant_uuid_for_read(principal)
 

@@ -31,7 +31,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from schemas.storage.audit import AuditEventRow, AuditStatusEnum
 from schemas.storage.session import (
+    ActorKindEnum,
     ApprovalStatusEnum,
     PendingApprovalRow,
     SessionRow,
@@ -360,7 +362,75 @@ async def resolve_approval_endpoint(
     await db.commit()
     await db.refresh(row)
 
+    # Write a corresponding audit_events row so the UI's audit log shows
+    # ``approval.granted`` / ``approval.rejected`` entries. Best-effort —
+    # a schema/DB hiccup here must not roll back the approval state
+    # transition (losing an approval state is far worse than losing one
+    # audit row). Mirrors the try/except style of ``record_auth_failure``.
+    try:
+        await _write_approval_audit(
+            db,
+            tenant_uuid=tenant_uuid,
+            principal=principal,
+            approval_id=approval_id,
+            session_id=str(row.session_id),
+            tool_name=row.tool_name,
+            granted=body.granted,
+            reason=body.reason,
+            now=now,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "approval audit write failed approval_id=%s granted=%s: %s",
+            approval_id,
+            body.granted,
+            exc,
+        )
+
     return _row_to_item(row)
+
+
+async def _write_approval_audit(
+    db: AsyncSession,
+    *,
+    tenant_uuid: uuid.UUID,
+    principal: AuthenticatedPrincipal,
+    approval_id: str,
+    session_id: str,
+    tool_name: str,
+    granted: bool,
+    reason: str | None,
+    now: datetime,
+) -> None:
+    """Insert one ``audit_events`` row describing this approval decision.
+
+    Raises on DB errors so the caller's ``try/except`` can log-and-continue.
+    """
+    try:
+        actor_uuid: uuid.UUID | None = uuid.UUID(principal.user_id)
+    except ValueError:
+        actor_uuid = None
+
+    verb = "granted" if granted else "rejected"
+    event_row = AuditEventRow(
+        tenant_id=tenant_uuid,
+        actor_id=actor_uuid,
+        actor_kind=ActorKindEnum.HUMAN,
+        tool=f"approval.{verb}",
+        inputs={
+            "approval_id": approval_id,
+            "session_id": session_id,
+            "tool_name": tool_name,
+            "reason": reason,
+        },
+        outputs={},
+        entity_refs={},
+        started_at=now,
+        completed_at=now,
+        status=AuditStatusEnum.SUCCEEDED,
+    )
+    db.add(event_row)
+    await db.commit()
 
 
 __all__ = ["router"]
