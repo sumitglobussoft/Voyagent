@@ -68,6 +68,7 @@ export const DOC_SLUGS = [
   "CANONICAL_MODEL",
   "STACK",
   "ACTIVITIES",
+  "VENDOR_ONBOARDING",
 ] as const;
 
 export type DocSlug = (typeof DOC_SLUGS)[number];
@@ -78,6 +79,7 @@ export const DOC_TITLES: Record<DocSlug, string> = {
   CANONICAL_MODEL: "Canonical model",
   STACK: "Tech stack",
   ACTIVITIES: "Activity inventory",
+  VENDOR_ONBOARDING: "Vendor onboarding",
 };
 
 // Convention: INTEGRATION_LABELS only lists vendors with a live driver or
