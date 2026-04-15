@@ -50,9 +50,23 @@ export function middleware(req: NextRequest) {
       : pathname;
     const nextPath = safeNextPath(stripped);
 
-    // Build the redirect target from req.url to avoid NextURL/basePath
-    // interactions that have previously dropped search params at runtime.
-    const target = new URL("/app/sign-in", req.url);
+    // Build the absolute redirect URL from the inbound public Host +
+    // X-Forwarded-Proto headers — never `req.url`, which carries the
+    // upstream `http://127.0.0.1:3011` when running behind nginx +
+    // `next start -H 127.0.0.1`. Falling through to req.nextUrl.origin
+    // would have the same leak. The base is reconstructed from headers.
+    const proto =
+      req.headers.get("x-forwarded-proto") ?? req.nextUrl.protocol.replace(":", "");
+    const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
+    if (!host) {
+      // Should never happen — every HTTP request carries a Host header. If
+      // it does, fall back to the relative form (browsers handle relative
+      // Location headers fine even though the spec recommends absolute).
+      return NextResponse.redirect(
+        `/app/sign-in?next=${encodeURIComponent(nextPath)}` as unknown as URL,
+      );
+    }
+    const target = new URL(`${proto}://${host}/app/sign-in`);
     target.searchParams.set("next", nextPath);
     return NextResponse.redirect(target);
   }
