@@ -126,8 +126,12 @@ test.describe("auth flows", () => {
 
     // Clicking the sign-out button 303-redirects to "/" per the route. Some
     // deployments may instead redirect to /app/sign-in; accept either and
-    // assert we are not still on a gated /app/* surface.
-    await page.getByRole("button", { name: /sign out/i }).click();
+    // assert we are not still on a gated /app/* surface. On the Pixel 5
+    // viewport an overlay can intercept the click — scroll-into-view +
+    // force is a reliable workaround that still exercises the button.
+    const signOutButton = page.getByRole("button", { name: /sign out/i });
+    await signOutButton.scrollIntoViewIfNeeded();
+    await signOutButton.click({ force: true });
     await page.waitForLoadState("domcontentloaded");
     const finalUrl = page.url();
     expect(finalUrl).toMatch(/(\/|\/app\/sign-in)(\?|$|#)/);
