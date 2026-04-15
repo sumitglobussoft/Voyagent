@@ -19,7 +19,7 @@
 import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 
-import { AppSidebar } from "@/components/AppSidebar";
+import { AppSidebar, SidebarContent } from "@/components/AppSidebar";
 import { MobileHeader } from "@/components/MobileHeader";
 import { getCurrentUser } from "@/lib/auth";
 
@@ -48,7 +48,13 @@ export default async function AuthedLayout({ children }: { children: ReactNode }
           background: "#fafafa",
         }}
       >
-        <MobileHeader user={user} />
+        <MobileHeader>
+          {/* Server-rendered sidebar content — passed as children so
+              the client MobileHeader/MobileDrawer don't have to import
+              (and transitively pull in `server-only`) through a client
+              boundary. */}
+          <SidebarContent user={user} />
+        </MobileHeader>
         {children}
       </div>
     </div>

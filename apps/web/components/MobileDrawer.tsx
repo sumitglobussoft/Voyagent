@@ -20,22 +20,24 @@
  *
  * No animation library — plain CSS transitions on transform + opacity.
  */
-import { useEffect, type ReactElement } from "react";
-
-import type { PublicUser } from "@/lib/auth";
-
-import { SidebarContent } from "./AppSidebar";
+import { useEffect, type ReactElement, type ReactNode } from "react";
 
 export interface MobileDrawerProps {
-  user: PublicUser;
   isOpen: boolean;
   onClose: () => void;
+  /**
+   * Sidebar content, pre-rendered by the server layout. Passing it as
+   * children (instead of importing SidebarContent here) keeps this
+   * client component from transitively pulling in `server-only` code
+   * via `SessionList` → `lib/api.ts` → `lib/formatting.tsx`.
+   */
+  children: ReactNode;
 }
 
 export function MobileDrawer({
-  user,
   isOpen,
   onClose,
+  children,
 }: MobileDrawerProps): ReactElement {
   useEffect(() => {
     if (!isOpen) return;
@@ -72,7 +74,7 @@ export function MobileDrawer({
         aria-modal="true"
         aria-label="Primary navigation"
       >
-        <SidebarContent user={user} onNavClick={onClose} />
+        {children}
       </aside>
     </>
   );

@@ -12,13 +12,21 @@
  * it. Clicking the hamburger opens the ``<MobileDrawer>`` which
  * contains the same ``SidebarContent`` the desktop sidebar uses.
  */
-import { useState, type ReactElement } from "react";
-
-import type { PublicUser } from "@/lib/auth";
+import { useState, type ReactElement, type ReactNode } from "react";
 
 import { MobileDrawer } from "./MobileDrawer";
 
-export function MobileHeader({ user }: { user: PublicUser }): ReactElement {
+/**
+ * Client component — owns the drawer's `isOpen` state only. The
+ * sidebar content itself is passed in as `children` from the server
+ * layout so we don't transitively import server-only modules through
+ * a client boundary.
+ */
+export function MobileHeader({
+  children,
+}: {
+  children: ReactNode;
+}): ReactElement {
   const [isOpen, setIsOpen] = useState(false);
 
   return (
@@ -45,11 +53,9 @@ export function MobileHeader({ user }: { user: PublicUser }): ReactElement {
         </a>
       </header>
       <div className="voyagent-mobile-only" id="voyagent-mobile-drawer">
-        <MobileDrawer
-          user={user}
-          isOpen={isOpen}
-          onClose={() => setIsOpen(false)}
-        />
+        <MobileDrawer isOpen={isOpen} onClose={() => setIsOpen(false)}>
+          {children}
+        </MobileDrawer>
       </div>
     </>
   );
