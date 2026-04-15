@@ -9,6 +9,86 @@ deploy to the demo host.
 
 ---
 
+## 2026-04-15 — Wave 2: platform, polish, operations (6 parallel agents, ~200 new tests)
+
+Six disjoint agent packs shipped in parallel, ~200 new unit + functional tests on top of the wave-1 98.
+
+**Web experience polish:**
+- Dark mode (Tailwind `darkMode: "class"`, ThemeProvider + cookie + localStorage + `prefers-color-scheme`)
+- Toast notifications with server-action cookie-queue bridge
+- 404 + 500 pages (public, authed, marketing variants)
+- Dynamic favicons via Next 15 `app/icon.tsx`
+- `AppProviders` shell wiring Theme / Locale / Toast / CommandPalette in a fixed nesting order
+
+**i18n + command palette + API docs:**
+- Hand-rolled i18n layer (no next-intl dep): `messages/{en,hi}.json` + `lib/i18n.ts` + `LocaleProvider` + `LocaleSwitcher`
+- Real Hindi translations for the full UI string set
+- `Cmd+K` / `Ctrl+K` command palette with fuzzy matcher, 8 hardcoded commands, accessible dialog
+- `/docs/api` marketing page rendering the live OpenAPI JSON (1-hour ISR), linked from nav + sitemap
+- `Intl`-based currency / date / relative-time helpers
+
+**Product features:**
+- `DELETE /api/chat/sessions/{id}` cascading to `pending_approvals` + `messages`
+- `PATCH /api/chat/sessions/{id}` rename
+- `GET /api/audit/export.csv` admin-only streaming export, 100k row cap
+- Six new `/api/enquiries` filter params: `customer_email`, `destination`, `origin`, `depart_from`, `depart_to`, `created_from`, `created_to`
+- Migration `0011_approvals_payload`: `payload JSONB` + `resolved_by_user_id` FK
+- Session list item hover actions for rename / delete
+- 64 new tests across chat, audit, enquiries, approvals, storage
+
+**Agent runtime enhancements:**
+- Per-tenant settings: model override, `system_prompt_suffix`, `rate_limit_per_minute/hour`, `daily_token_budget`, `locale`, `timezone`, `default_currency`
+- Cost tracker writing to `session_costs` (Sonnet / Opus / Haiku 4.5 pricing), enforces daily budget as 429
+- Sliding-window per-tenant rate limiter (process-local, async-locked)
+- Tool result cache (allowlist: `search_flights`, `search_hotels`, `check_hotel_rate`, `list_ledger_accounts`, `lookup_passenger`; 5-min default TTL; tenant-scoped)
+- `rehype-highlight` wired into the chat markdown pipeline with `github` / `github-dark` themes
+- Migration `0012_tenant_settings_costs`
+- `GET` / `PATCH /api/tenant-settings` (admin-only)
+
+**Release infrastructure:**
+- `.github/workflows/desktop-release.yml` — Tauri build matrix (macOS/Linux/Windows), PR dry-run job, release asset upload
+- `.github/workflows/mobile-release.yml` — EAS build + OTA update, `workflow_dispatch` inputs
+- `apps/mobile/eas.json` with development/preview/production profiles
+- Passport OCR scaffold: real `parseMrz` (ICAO 9303 TD-3) + stubbed `extractPassport` + `PassportScanner` component using `expo-camera`
+- `vitest` added to `apps/mobile` with a Node-env config, 19 OCR tests (check digits, ICAO specimen, generated vectors, error paths)
+
+**Testing depth + documentation:**
+- `tests/e2e/specs/a11y.spec.ts` using `@axe-core/playwright` across 19 pages
+- `tests/integration/` with opt-in real-Postgres fixture (skipped by default)
+- `tests/load/` with locust scenarios
+- `docs/GETTING_STARTED.md` agency onboarding walkthrough
+- `docs/DRIVERS.md` + `docs/drivers/{AMADEUS,TBO,TALLY,BSP_INDIA,VFS}.md` per-driver setup pages
+
+**Off-site backups + staging + secret rotation:**
+- `pg-backup-offsite.sh` rclone wrapper supporting AWS S3 / B2 / R2 / Wasabi / MinIO / DO Spaces
+- `pg-restore.sh` with interactive confirmation gate
+- Second systemd timer (03:30 UTC) + opt-in `.env.offsite-backup`
+- `infra/deploy/staging/` bootstrap script + systemd unit templates + nginx vhost template (ports +10)
+- `rotate-secret.sh` for JWT / DB / Redis / metrics / KMS
+- `verify-secrets.sh` pre-deploy sanity check
+- `docs/BACKUPS.md`, `docs/STAGING.md`, `docs/SECRET_ROTATION.md`
+
+Commits `54e7598` → prod.
+
+## 2026-04-15 — Wave 1: team onboarding, DevOps, observability, mobile polish, auth hardening, agent-to-ledger loop (5 + 1 agents, ~100 new tests)
+
+- Tenant invites + roles + RBAC + migration `0008_invites`
+- `PATCH /api/auth/profile`, password reset flow, profile + tenant settings pages
+- GitHub Actions CI workflow (Python + TypeScript + Playwright + marketing build)
+- `pg-backup.sh` + systemd timer (daily 02:00 UTC, 30-day retention) + `docs/RUNBOOK.md`
+- Sentry API + web + marketing integration + PII scrubbing + tenant tagging middleware
+- Prometheus `/internal/metrics` endpoint gated localhost-or-token
+- Mobile sidebar drawer, `MobileHeader`, `Skeleton` primitive, enquiries responsive filter, 4 `loading.tsx` files
+- Password strength validator + 58-entry blocklist
+- TOTP 2FA (`pyotp`) with `/auth/totp/{setup,verify,disable}` + `/auth/sign-in-totp`
+- API keys table + `vy_<prefix>_<body>` format, SHA256 hash storage, scopes + expiry + revoke + last_used
+- Migration `0010_totp_and_api_keys`
+- `draft_invoice` tool (approval-gated, auto-numbering per tenant, Decimal-only, mixed-currency error codes)
+- `/reports/trial-balance` endpoint (as_of + include_zero)
+- `tools/seed_demo.py` demo tenant seeder (idempotent, 5 enquiries + 3 invoices + 3 bills + 5 accounts + 3 balanced journals + 5 audit events)
+
+Commits `c439755` → `5ae5b03` → prod.
+
 ## 2026-04-15 — Vendor onboarding doc
 
 - New client-facing onboarding doc at `/docs/VENDOR_ONBOARDING` (also

@@ -21,6 +21,119 @@ interface ChangelogEntry {
 const ENTRIES: ChangelogEntry[] = [
   {
     date: "2026-04-15",
+    title: "Wave 2: dark mode, i18n, runtime + release infra, ~200 new tests",
+    summary:
+      "Six parallel agent packs: dark mode + command palette + i18n, product feature polish, per-tenant runtime settings, desktop + mobile release CI, axe-core sweeps, and off-site backup + staging tooling.",
+    bullets: [
+      <>
+        Dark mode across the app (Tailwind <code>darkMode: &quot;class&quot;</code>,
+        cookie + localStorage + <code>prefers-color-scheme</code>), toast
+        notifications, proper 404 and 500 pages, dynamic favicons.
+      </>,
+      <>
+        Hand-rolled <code>en</code>/<code>hi</code> internationalisation with a
+        language switcher on the settings page, plus a Cmd+K command palette
+        with fuzzy matching over the in-app actions.
+      </>,
+      <>
+        Chat session delete and rename, audit log CSV export (admin-only
+        streaming, 100k row cap), six new enquiry filter parameters, and a
+        schema migration that actually populates <code>payload</code> and{" "}
+        <code>resolved_by_user_id</code> on approvals.
+      </>,
+      <>
+        Per-tenant agent runtime settings: model override, system prompt
+        suffix, rate limits per minute / hour, daily token budget, default
+        currency. Cost tracker writes every turn to{" "}
+        <code>session_costs</code> and enforces the daily budget.
+      </>,
+      <>
+        <code>GET</code> / <code>PATCH /api/tenant-settings</code> admin-only,
+        plus a trial-balance report and tool result cache (read-only
+        allowlist, tenant-scoped, 5-minute default TTL).
+      </>,
+      <>
+        <code>.github/workflows/desktop-release.yml</code> (Tauri build matrix
+        for macOS, Linux, Windows with PR dry-run) and{" "}
+        <code>mobile-release.yml</code> (EAS build + OTA update).
+      </>,
+      <>
+        Passport OCR scaffold in the mobile app with a real ICAO 9303 MRZ
+        parser (and a stubbed capture path until a provider is picked). First
+        vitest suite wired into <code>apps/mobile</code>.
+      </>,
+      <>
+        Accessibility sweep with <code>@axe-core/playwright</code> across 19
+        pages (surfaced 8 pre-existing colour-contrast violations as a UX
+        backlog), an opt-in real-Postgres integration fixture, Locust load
+        scenarios, and a getting-started walkthrough plus per-driver setup
+        pages.
+      </>,
+      <>
+        Off-site Postgres backups via an rclone wrapper (AWS S3, Backblaze
+        B2, Cloudflare R2, Wasabi, MinIO, DigitalOcean Spaces), a staging
+        environment bootstrap script with systemd unit templates, and a
+        secret rotation CLI for the JWT / DB / Redis / metrics / KMS
+        secrets.
+      </>,
+    ],
+  },
+  {
+    date: "2026-04-15",
+    title: "Wave 1: team onboarding, auth hardening, observability, agent-to-ledger, ~100 new tests",
+    summary:
+      "Five parallel packs that unblock real team usage and close the loop between the agent runtime and the ledger.",
+    bullets: [
+      <>
+        Tenant invites with roles, accept-invite flow, and an{" "}
+        <code>/app/settings</code> page for admins to manage members.
+      </>,
+      <>
+        <code>PATCH /api/auth/profile</code>, a password reset flow (Redis
+        token, log-to-stdout email stub), and three new public pages:{" "}
+        <code>/app/forgot-password</code>, <code>/app/reset-password</code>,
+        and <code>/app/accept-invite</code>.
+      </>,
+      <>
+        Password strength validator with a 58-entry blocklist, TOTP 2FA with{" "}
+        <code>pyotp</code> and a <code>/auth/sign-in-totp</code> second-factor
+        endpoint, plus an API key table with scoped <code>vy_</code>-prefixed
+        keys.
+      </>,
+      <>
+        GitHub Actions CI (pytest + vitest + Playwright + marketing build),
+        automated Postgres backups via a systemd timer with a 30-day
+        retention, and a runbook documenting 17 deploy gotchas from
+        previous sessions.
+      </>,
+      <>
+        Sentry integration across the API, web app, and marketing site with
+        PII-scrubbing <code>before_send</code> hooks and a tenant-tagging
+        middleware, plus a Prometheus <code>/internal/metrics</code> endpoint
+        gated to localhost or a shared token.
+      </>,
+      <>
+        Mobile sidebar drawer (hidden below 768px with a hamburger
+        overlay), enquiries filter bar now responsive, four{" "}
+        <code>loading.tsx</code> skeletons for the main list pages.
+      </>,
+      <>
+        Audit log viewer with admin-only RBAC, an approvals-to-audit hook so
+        granted and rejected decisions land in the trail, and a passenger
+        resolver that mints UUIDv7 identifiers correctly.
+      </>,
+      <>
+        <code>draft_invoice</code> tool for the accounting agent
+        (approval-gated, auto-numbering per tenant, <code>Decimal</code>-only
+        math), the <code>/reports/trial-balance</code> endpoint, and a demo
+        tenant seeder that populates five enquiries, three invoices, three
+        bills, five ledger accounts, three balanced journal entries, and
+        five audit events &mdash; idempotent via a marker row.
+      </>,
+    ],
+  },
+  {
+    date: "2026-04-15",
     title: "Demo account and chat path fixes",
     summary:
       "A public demo login and three fixes to the chat path that were biting browser-side SDK consumers.",
