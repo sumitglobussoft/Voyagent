@@ -32,8 +32,13 @@ export function middleware(req: NextRequest) {
 
   // Next 15 with basePath="/app" strips the basePath from pathname inside
   // middleware. So `/app/enquiries` shows up here as `/enquiries`, and
-  // `/app/sign-in` as `/sign-in`. Normalize either form.
-  const stripped = pathname.startsWith(BASE_PATH)
+  // `/app/sign-in` as `/sign-in`. Normalize either form. Use an EXACT
+  // prefix check (BASE_PATH or BASE_PATH + "/") so `/approvals` doesn't
+  // misfire on the bare `/app` substring (`/approvals`.startsWith(`/app`)
+  // is true and would slice to "rovals" — silent bug).
+  const hasBasePath =
+    pathname === BASE_PATH || pathname.startsWith(BASE_PATH + "/");
+  const stripped = hasBasePath
     ? pathname.slice(BASE_PATH.length) || "/"
     : pathname;
 
