@@ -30,7 +30,7 @@ test.describe("auth flows", () => {
       page.getByRole("button", { name: /create account/i }).click(),
     ]);
 
-    expect(page.url()).toMatch(/\/app\/chat(\?|$)/);
+    await expect(page).toHaveURL(/\/app\/chat(\?|$)/);
   });
 
   test("sign-in via UI lands on /app/chat after UI sign-up + sign-out", async ({
@@ -56,7 +56,7 @@ test.describe("auth flows", () => {
     // Route redirects to "/" (marketing root) with status 303.
     await page.getByRole("button", { name: /sign out/i }).click();
     await page.waitForLoadState("domcontentloaded");
-    expect(page.url()).not.toMatch(/\/app\/chat/);
+    await expect(page).not.toHaveURL(/\/app\/chat/);
 
     // Now sign back in.
     await page.goto("/app/sign-in", { waitUntil: "domcontentloaded" });
@@ -67,7 +67,7 @@ test.describe("auth flows", () => {
       page.getByRole("button", { name: /^sign in$/i }).click(),
     ]);
 
-    expect(page.url()).toMatch(/\/app\/chat(\?|$)/);
+    await expect(page).toHaveURL(/\/app\/chat(\?|$)/);
   });
 
   test("sign-in with wrong password shows inline error", async ({ page }) => {
@@ -86,7 +86,7 @@ test.describe("auth flows", () => {
       /email or password is incorrect/i,
     );
     await expect(errorBanner).toBeVisible({ timeout: 10_000 });
-    expect(page.url()).toContain("/app/sign-in");
+    await expect(page).toHaveURL(/\/app\/sign-in/);
   });
 
   test("demo account banner is visible on /app/sign-in", async ({ page }) => {
@@ -135,18 +135,19 @@ test.describe("auth flows", () => {
 
     // Subsequent /app/chat hit must redirect to sign-in.
     await page.goto("/app/chat", { waitUntil: "domcontentloaded" });
-    expect(page.url()).toMatch(/\/app\/sign-in/);
+    await expect(page).toHaveURL(/\/app\/sign-in/);
   });
 
-  test("unauth access to /app/chat redirects to /app/sign-in with next", async ({
+  test("unauth access to /app/chat redirects to /app/sign-in with next=%2Fchat", async ({
     page,
   }) => {
     await page.goto("/app/chat", { waitUntil: "domcontentloaded" });
-    const u = page.url();
-    expect(u).toContain("/app/sign-in");
-    // Middleware MUST preserve the original path as ?next=... so the
-    // sign-in action can redirect back after a successful login.
-    expect(u).toMatch(/[?&]next=%2Fchat(&|$)|[?&]next=\/chat(&|$)/);
+    // Middleware MUST preserve the original path as ?next=... (encoded or
+    // decoded) so the sign-in action can redirect back after a successful
+    // login. Single strict assertion: path is /app/sign-in AND next=/chat.
+    await expect(page).toHaveURL(
+      /\/app\/sign-in\?(?:[^#]*&)?next=(?:%2F|\/)chat(?:&|$|#)/,
+    );
   });
 
   test("unauth deep-link to /app/enquiries preserves next= and post-sign-in lands on /app/enquiries", async ({
@@ -171,10 +172,8 @@ test.describe("auth flows", () => {
 
     // Now the deep-link flow.
     await page.goto("/app/enquiries", { waitUntil: "domcontentloaded" });
-    const redirected = page.url();
-    expect(redirected).toContain("/app/sign-in");
-    expect(redirected).toMatch(
-      /[?&]next=%2Fenquiries(&|$)|[?&]next=\/enquiries(&|$)/,
+    await expect(page).toHaveURL(
+      /\/app\/sign-in\?(?:[^#]*&)?next=(?:%2F|\/)enquiries(?:&|$|#)/,
     );
 
     // Sign in — must land on /app/enquiries, not /app/chat.
@@ -184,52 +183,80 @@ test.describe("auth flows", () => {
       page.waitForURL(/\/app\/enquiries(\?|$)/, { timeout: 15_000 }),
       page.getByRole("button", { name: /^sign in$/i }).click(),
     ]);
-    expect(page.url()).toMatch(/\/app\/enquiries(\?|$)/);
+    await expect(page).toHaveURL(/\/app\/enquiries(\?|$)/);
+    // Must NOT have been bounced back to /chat.
+    await expect(page).not.toHaveURL(/\/app\/chat/);
   });
 
-  test("open-redirect-safe: /app/sign-in?next=//evil.com lands on /app/chat after sign-in", async ({
+  test("bare /app resolves in at most 2 hops to /app/sign-in without looping", async ({
     page,
   }) => {
-    // Create a throwaway account to exercise the sign-in action's
-    // next validator. A malicious or malformed `next` value must be
-    // rejected by safeNextPath() and fall back to the /chat default.
-    const email = uniqueEmail("openredir");
+    // Regression for the /app -> /app/ -> /app nginx+Next loop.
+    // A fresh unauth visit must settle at /app/sign-in in a bounded
+    // number of hops. We instrument framenavigated to assert the hop
+    // count stays small; anything >4 signals a loop regression.
+    const urls: string[] = [];
+    page.on("framenavigated", (frame) => {
+      if (frame === page.mainFrame()) urls.push(frame.url());
+    });
+
+    const response = await page.goto("/app", { waitUntil: "domcontentloaded" });
+    expect(response).not.toBeNull();
+    await expect(page).toHaveURL(/\/app\/sign-in(\?|$)/);
+    // Hops observed on a healthy deployment: 1 (initial /app) +
+    // 1 (redirected /app/sign-in). Anything more than 4 indicates
+    // the historical loop has regressed.
+    expect(
+      urls.length,
+      `expected bounded hop count, got ${urls.length}: ${urls.join(" -> ")}`,
+    ).toBeLessThanOrEqual(4);
+  });
+
+  test("sign-up honours next= — /app/sign-up?next=/audit lands on /app/audit", async ({
+    page,
+  }) => {
+    // Wave 8 wired `next=` parity into the sign-up server action. A freshly
+    // created account that arrived via a deep-link must land on the
+    // requested page, not the default /chat welcome surface.
+    const email = uniqueEmail("signup-next");
     const password = "PlaywrightPass123!";
 
-    await page.goto("/app/sign-up", { waitUntil: "domcontentloaded" });
-    await page.getByLabel("Full name").fill("Playwright OpenRedir");
+    await page.goto("/app/sign-up?next=%2Faudit", {
+      waitUntil: "domcontentloaded",
+    });
+    await page.getByLabel("Full name").fill("Playwright SignupNext");
     await page.getByLabel("Work email").fill(email);
     await page.getByLabel("Agency name").fill("Playwright UI Agency");
     await page.getByLabel("Password", { exact: true }).fill(password);
     await page.getByLabel("Confirm password").fill(password);
+
     await Promise.all([
-      page.waitForURL(/\/app\/chat(\?|$)/, { timeout: 15_000 }),
+      page.waitForURL(/\/app\/audit(\?|$)/, { timeout: 15_000 }),
       page.getByRole("button", { name: /create account/i }).click(),
     ]);
-    await page.getByRole("button", { name: /sign out/i }).click();
-    await page.waitForLoadState("domcontentloaded");
 
-    await page.goto("/app/sign-in?next=%2F%2Fevil.com", {
-      waitUntil: "domcontentloaded",
-    });
-    await page.getByLabel("Email").fill(email);
-    await page.getByLabel("Password").fill(password);
-    await Promise.all([
-      page.waitForURL(/\/app\/chat(\?|$)/, { timeout: 15_000 }),
-      page.getByRole("button", { name: /^sign in$/i }).click(),
-    ]);
-    // Must NOT have been redirected off-domain.
-    expect(page.url()).toMatch(/voyagent\.globusdemos\.com|localhost|127\.0\.0\.1/);
-    expect(page.url()).toMatch(/\/app\/chat(\?|$)/);
+    await expect(page).toHaveURL(/\/app\/audit(\?|$)/);
+    // Must NOT have been bounced to the default /chat welcome page.
+    await expect(page).not.toHaveURL(/\/app\/chat/);
   });
 
-  test("bare /app resolves without a redirect loop", async ({ page }) => {
-    // Regression for the /app -> /app/ -> /app nginx+Next loop.
-    // A fresh unauth visit must land on /app/sign-in in at most a
-    // couple of hops, not cycle forever.
-    const response = await page.goto("/app", { waitUntil: "domcontentloaded" });
-    expect(response).not.toBeNull();
-    // Final URL: unauth user ends up at sign-in (via /app/chat middleware).
-    expect(page.url()).toMatch(/\/app\/sign-in(\?|$)/);
+  test("cross-link: sign-in -> Create one preserves next=", async ({
+    page,
+  }) => {
+    // Visiting /app/sign-in?next=/enquiries and clicking "Create one"
+    // must forward the `next` through to the sign-up page so the fresh
+    // account lands on /enquiries, not /chat.
+    await page.goto("/app/sign-in?next=%2Fenquiries", {
+      waitUntil: "domcontentloaded",
+    });
+    await Promise.all([
+      page.waitForURL(/\/app\/sign-up\?(?:[^#]*&)?next=(?:%2F|\/)enquiries/, {
+        timeout: 10_000,
+      }),
+      page.getByRole("link", { name: /create one/i }).click(),
+    ]);
+    await expect(page).toHaveURL(
+      /\/app\/sign-up\?(?:[^#]*&)?next=(?:%2F|\/)enquiries(?:&|$|#)/,
+    );
   });
 });

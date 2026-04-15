@@ -77,28 +77,70 @@ export function isPast(iso: string | null | undefined): boolean {
 }
 
 /**
- * Map a status string to a badge color. Any unknown status falls back
- * to a neutral grey.
+ * Map a status/kind string to a badge color. Any unknown value falls
+ * back to a neutral grey.
+ *
+ * This map covers three populations:
+ *  - approval/enquiry lifecycle statuses (bare words: "pending",
+ *    "granted", "booked", …)
+ *  - audit-log event kinds (dotted: "approval.granted",
+ *    "auth.verify", …) wired in by the approvals → audit hook
+ *  - canonical tool names fired through the audit pipeline
+ *    ("issue_ticket", "hold_fare", "void_ticket", …) — neutral
+ *
+ * For dotted audit kinds we also fall back by prefix (``auth.*`` →
+ * warning, ``tool.*`` → neutral, ``approval.*`` → grey) so new
+ * siblings don't have to be enumerated here to get a sensible color.
  */
+const COLOR_WARNING = { bg: "#fef9c3", fg: "#854d0e", border: "#fde68a" };
+const COLOR_SUCCESS = { bg: "#dcfce7", fg: "#166534", border: "#bbf7d0" };
+const COLOR_DANGER = { bg: "#fee2e2", fg: "#991b1b", border: "#fecaca" };
+const COLOR_MUTED = { bg: "#e5e7eb", fg: "#374151", border: "#d1d5db" };
+const COLOR_INFO = { bg: "#dbeafe", fg: "#1e40af", border: "#bfdbfe" };
+const COLOR_NEUTRAL = { bg: "#f3f4f6", fg: "#374151", border: "#e5e7eb" };
+
 const BADGE_COLORS: Record<string, { bg: string; fg: string; border: string }> = {
   // approvals
-  pending: { bg: "#fef9c3", fg: "#854d0e", border: "#fde68a" },
-  granted: { bg: "#dcfce7", fg: "#166534", border: "#bbf7d0" },
-  rejected: { bg: "#fee2e2", fg: "#991b1b", border: "#fecaca" },
-  expired: { bg: "#e5e7eb", fg: "#374151", border: "#d1d5db" },
+  pending: COLOR_WARNING,
+  granted: COLOR_SUCCESS,
+  rejected: COLOR_DANGER,
+  expired: COLOR_MUTED,
   // enquiries
-  new: { bg: "#dbeafe", fg: "#1e40af", border: "#bfdbfe" },
+  new: COLOR_INFO,
   quoted: { bg: "#fef3c7", fg: "#92400e", border: "#fde68a" },
-  booked: { bg: "#dcfce7", fg: "#166534", border: "#bbf7d0" },
-  cancelled: { bg: "#e5e7eb", fg: "#374151", border: "#d1d5db" },
+  booked: COLOR_SUCCESS,
+  cancelled: COLOR_MUTED,
+  // audit kinds — approvals → audit hook
+  "approval.granted": COLOR_SUCCESS,
+  "approval.rejected": COLOR_DANGER,
+  "approval.expired": COLOR_MUTED,
+  // audit kinds — auth
+  "auth.verify": COLOR_WARNING,
+  "auth.sign_in": COLOR_SUCCESS,
+  // audit kinds — canonical tools (all neutral; the row-level status
+  // dot distinguishes ok vs error)
+  issue_ticket: COLOR_NEUTRAL,
+  hold_fare: COLOR_NEUTRAL,
+  void_ticket: COLOR_NEUTRAL,
+  refund_ticket: COLOR_NEUTRAL,
 };
 
+function resolveBadgeColors(value: string): { bg: string; fg: string; border: string } {
+  const hit = BADGE_COLORS[value];
+  if (hit) return hit;
+  // Prefix fallbacks for dotted audit kinds we haven't enumerated.
+  if (value.startsWith("auth.")) return COLOR_WARNING;
+  if (value.startsWith("approval.")) return COLOR_MUTED;
+  if (value.startsWith("tool.")) return COLOR_NEUTRAL;
+  return COLOR_NEUTRAL;
+}
+
 export function StatusBadge({ status }: { status: string }): ReactElement {
-  const colors = BADGE_COLORS[status] ?? {
-    bg: "#f3f4f6",
-    fg: "#374151",
-    border: "#e5e7eb",
-  };
+  const colors = resolveBadgeColors(status);
+  // Dotted audit kinds (e.g. ``approval.granted``) are identifiers,
+  // not sentences — don't title-case them. Bare lifecycle words like
+  // "pending" / "booked" still get capitalized.
+  const isDotted = status.includes(".") || status.includes("_");
   const style: CSSProperties = {
     display: "inline-block",
     padding: "2px 8px",
@@ -108,7 +150,10 @@ export function StatusBadge({ status }: { status: string }): ReactElement {
     border: `1px solid ${colors.border}`,
     fontSize: 12,
     fontWeight: 500,
-    textTransform: "capitalize",
+    textTransform: isDotted ? "none" : "capitalize",
+    fontFamily: isDotted
+      ? "ui-monospace, SFMono-Regular, Menlo, monospace"
+      : undefined,
     whiteSpace: "nowrap",
   };
   return <span style={style}>{status}</span>;

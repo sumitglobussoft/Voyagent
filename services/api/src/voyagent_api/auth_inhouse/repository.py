@@ -81,6 +81,11 @@ class UserRepository:
 
         user = User(
             tenant_id=tenant.id,
+            # ``external_id`` is a legacy IdP-issued identifier stored as an
+            # opaque ``String(128)``; it is surfaced downstream only as
+            # ``TenantContext.(user_)external_id: str`` (plain string, not
+            # ``EntityId``). UUIDv4 is intentional — this column is not
+            # canonical-``EntityId`` territory, so v7 is not required here.
             external_id=str(uuid.uuid4()),
             display_name=full_name,
             email=email.lower(),

@@ -51,7 +51,8 @@ const PAGE_SIZE = 50;
 // + runtime: ``auth.verify`` fires from the auth-failure middleware,
 // ``issue_ticket`` / ``hold_fare`` / ``void_ticket`` are canonical
 // tool names, ``approval.granted`` / ``approval.rejected`` are
-// reserved for a future approval-audit hook.
+// emitted by the approvals → audit hook. Badge colors for each of
+// these live in ``lib/formatting.tsx`` (``BADGE_COLORS``).
 const KIND_OPTIONS = [
   "all",
   "auth.verify",
