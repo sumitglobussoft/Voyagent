@@ -237,17 +237,25 @@ export async function getCurrentUser(): Promise<PublicUser | null> {
   }
 
   if (!rt) {
-    if (at) await clearSessionCookies();
+    if (at) await tryClearSessionCookies();
     return null;
   }
 
   const refreshed = await refresh(rt);
   if (!refreshed) {
-    await clearSessionCookies();
+    await tryClearSessionCookies();
     return null;
   }
 
-  await setSessionCookies(
+  // Cookie writes during a server-component render throw in Next 15
+  // ("Cookies can only be modified in a Server Action or Route Handler").
+  // Layouts call this helper on every request, so the refresh path must
+  // tolerate a render context — fall back to using the freshly-issued
+  // access token in-memory for this request and skip the cookie persist.
+  // The next mutation request (server action / route handler) will see
+  // the still-valid old cookies and re-trigger refresh in a context
+  // where setSessionCookies is allowed.
+  await trySetSessionCookies(
     refreshed.access_token,
     refreshed.refresh_token,
     refreshed.expires_in,
@@ -255,10 +263,36 @@ export async function getCurrentUser(): Promise<PublicUser | null> {
   if (refreshed.user) return refreshed.user;
   const user = await fetchMe(refreshed.access_token);
   if (!user) {
-    await clearSessionCookies();
+    await tryClearSessionCookies();
     return null;
   }
   return user;
+}
+
+async function trySetSessionCookies(
+  access: string,
+  refreshToken: string,
+  expiresIn: number,
+): Promise<void> {
+  try {
+    await setSessionCookies(access, refreshToken, expiresIn);
+  } catch (err) {
+    // Swallow the "cookies in render" error — we've already validated the
+    // session via the API; the in-memory access token serves THIS request.
+    // Persist will retry on the next mutation context.
+    if (process.env.NODE_ENV !== "production") {
+      console.warn("voyagent.auth.setSessionCookies skipped (render context)", err);
+    }
+  }
+}
+
+async function tryClearSessionCookies(): Promise<void> {
+  try {
+    await clearSessionCookies();
+  } catch {
+    // Same reason — render-context cookie write is illegal but harmless
+    // to skip; the user already has no valid session.
+  }
 }
 
 /**
