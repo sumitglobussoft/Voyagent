@@ -11,7 +11,8 @@
 import { strict as assert } from "node:assert";
 import { describe, it, beforeEach } from "node:test";
 
-import { POST, __resetRateLimiterForTests } from "./route";
+import { POST } from "./route";
+import { resetForTests as __resetRateLimiterForTests } from "./_limiter";
 
 function makeRequest(overrides: {
   ip?: string;
