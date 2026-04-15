@@ -27,16 +27,15 @@ test.describe("contact form", () => {
 
   test("shows success state on valid submit", async ({ page }) => {
     // Use a mailinator.com address (RFC 2606-reserved `.test` is not
-    // accepted by the form's email validator). The live /api/contact
-    // route is rate-limited; if we hit a 429 we treat that as a
-    // successful backend contact rather than a failure, since it still
-    // proves the submit wired into the API.
+    // accepted by the form's email validator). A unique local-part per
+    // run avoids the per-email dedup bucket on /api/contact (3/day).
+    const unique = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     await page
       .getByLabel(/full name/i)
       .fill("Playwright Tester");
     await page
       .getByLabel(/work email/i)
-      .fill(`tester+${Date.now()}@mailinator.com`);
+      .fill(`tester+${unique}@mailinator.com`);
     await page
       .getByLabel(/company/i)
       .fill("Voyagent E2E");
@@ -46,17 +45,11 @@ test.describe("contact form", () => {
 
     await page.getByRole("button", { name: /send message/i }).click();
 
-    // Accept either the success heading or the rate-limit banner —
-    // both prove the form wired into the backend. The "429" / "try
-    // again" copy is what the live deployment serves under load.
-    const success = page.getByRole("heading", {
-      name: /thanks.*message received/i,
-    });
-    const rateLimited = page.getByText(
-      /(429|rate limit|try again)/i,
-    );
-    await expect(success.or(rateLimited).first()).toBeVisible({
-      timeout: 15_000,
-    });
+    // Assert success only. The per-IP rate limit (5/hour) is loose
+    // enough that a single run cannot trip it, and the unique email
+    // above keeps the per-email bucket clean.
+    await expect(
+      page.getByRole("heading", { name: /thanks.*message received/i }),
+    ).toBeVisible({ timeout: 15_000 });
   });
 });

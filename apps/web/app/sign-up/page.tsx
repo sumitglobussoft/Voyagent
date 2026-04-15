@@ -1,12 +1,31 @@
 import Link from "next/link";
 
+import { safeNextPath } from "@/lib/next-url";
+
 import { SignUpForm } from "./SignUpForm";
 
 export const metadata = {
   title: "Create your account · Voyagent",
 };
 
-export default function SignUpPage() {
+// Next 15 made `searchParams` a Promise on server pages.
+export default async function SignUpPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ next?: string }>;
+}) {
+  const params = (await searchParams) ?? {};
+  // Validate at the page boundary; the action validates again. If the
+  // visitor arrived here via an unauth deep link (middleware routes to
+  // /app/sign-in, but they might click through to /app/sign-up) we
+  // forward `next` so a freshly-created account can land on the
+  // originally requested page.
+  const next = safeNextPath(params.next);
+  // Only render the hidden input if the user actually arrived with a
+  // next param; empty-string signals "no explicit destination" to the
+  // server action and falls back to /chat?welcome=1.
+  const hasExplicitNext = params.next !== undefined && next === params.next;
+
   return (
     <main
       style={{
@@ -32,9 +51,18 @@ export default function SignUpPage() {
         <p style={{ marginTop: 0, marginBottom: 24, color: "#555" }}>
           Spin up a Voyagent workspace for your team.
         </p>
-        <SignUpForm />
+        <SignUpForm next={hasExplicitNext ? next : ""} />
         <p style={{ marginTop: 24, fontSize: 14, color: "#555" }}>
-          Already have an account? <Link href="/app/sign-in">Sign in</Link>
+          Already have an account?{" "}
+          <Link
+            href={
+              hasExplicitNext
+                ? `/sign-in?next=${encodeURIComponent(next)}`
+                : "/sign-in"
+            }
+          >
+            Sign in
+          </Link>
         </p>
       </div>
     </main>

@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 
 import { setSessionCookies, signIn } from "@/lib/auth";
+import { safeNextPath } from "@/lib/next-url";
 
 export type SignInState = {
   error: string | null;
@@ -16,8 +17,14 @@ export async function signInAction(
   const password = String(formData.get("password") ?? "");
   // `next` arrives without the /app basePath because the middleware
   // strips it before passing through. Default redirects also live under
-  // basePath so they're un-prefixed here.
-  const next = String(formData.get("next") ?? "") || "/chat";
+  // basePath so they're un-prefixed here. safeNextPath() rejects any
+  // value that could turn this form into an open-redirect (protocol,
+  // protocol-relative, backslash, non-leading-slash).
+  const next = safeNextPath(
+    typeof formData.get("next") === "string"
+      ? (formData.get("next") as string)
+      : "",
+  );
 
   if (!email || !password) {
     return { error: "Email and password are required." };

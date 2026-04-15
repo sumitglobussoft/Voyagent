@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 
 import { setSessionCookies, signUp } from "@/lib/auth";
+import { safeNextPath } from "@/lib/next-url";
 
 export type SignUpState = {
   error: string | null;
@@ -17,6 +18,16 @@ export async function signUpAction(
   const agency_name = String(formData.get("agency_name") ?? "").trim();
   const password = String(formData.get("password") ?? "");
   const confirm = String(formData.get("confirm_password") ?? "");
+  // Mirror sign-in: if sign-up was reached via a deep link (e.g.
+  // /app/sign-up?next=/enquiries) honour the target after account
+  // creation. Fresh accounts land on /chat?welcome=1 when there's no
+  // explicit next; otherwise they go to the requested page.
+  const rawNext =
+    typeof formData.get("next") === "string"
+      ? (formData.get("next") as string)
+      : "";
+  const validatedNext = safeNextPath(rawNext);
+  const hadExplicitNext = rawNext !== "" && validatedNext === rawNext;
 
   if (!full_name || !email || !agency_name || !password) {
     return { error: "All fields are required." };
@@ -44,5 +55,5 @@ export async function signUpAction(
     result.refresh_token,
     result.expires_in,
   );
-  redirect("/chat?welcome=1");
+  redirect(hadExplicitNext ? validatedNext : "/chat?welcome=1");
 }

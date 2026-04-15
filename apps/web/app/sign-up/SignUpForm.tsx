@@ -37,11 +37,12 @@ function SubmitButton() {
   );
 }
 
-export function SignUpForm() {
+export function SignUpForm({ next = "" }: { next?: string }) {
   const [state, formAction] = useFormState(signUpAction, initialState);
 
   return (
     <form action={formAction} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <input type="hidden" name="next" value={next} />
       {state.error ? (
         <div
           role="alert"

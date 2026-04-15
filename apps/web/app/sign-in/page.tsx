@@ -12,6 +12,8 @@
  */
 import Link from "next/link";
 
+import { safeNextPath } from "@/lib/next-url";
+
 import { SignInForm } from "./SignInForm";
 
 // Public demo account. Deliberately exposed on the sign-in page so visitors
@@ -30,7 +32,10 @@ export default async function SignInPage({
   searchParams?: Promise<{ next?: string; demo?: string }>;
 }) {
   const params = (await searchParams) ?? {};
-  const next = params.next ?? "/chat";
+  // Validate `next` at the page layer too so the hidden input carries
+  // only values we'd be willing to redirect to — defence in depth; the
+  // server action validates again before the final `redirect()`.
+  const next = safeNextPath(params.next);
   const prefillDemo = params.demo === "1";
 
   return (
@@ -93,7 +98,15 @@ export default async function SignInPage({
         />
         <p style={{ marginTop: 24, fontSize: 14, color: "#555" }}>
           Don&apos;t have an account?{" "}
-          <Link href="/sign-up">Create one</Link>
+          <Link
+            href={
+              next && next !== "/chat"
+                ? `/sign-up?next=${encodeURIComponent(next)}`
+                : "/sign-up"
+            }
+          >
+            Create one
+          </Link>
         </p>
       </div>
     </main>
