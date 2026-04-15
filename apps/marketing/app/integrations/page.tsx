@@ -15,7 +15,11 @@ export const metadata: Metadata = {
   alternates: { canonical: absoluteUrl("/integrations") },
 };
 
-type IntegrationItem = { label: string; status: IntegrationStatus };
+type IntegrationItem = {
+  label: string;
+  status: IntegrationStatus;
+  note?: string;
+};
 
 const GROUPS: Array<{
   heading: string;
@@ -27,11 +31,18 @@ const GROUPS: Array<{
     description:
       "Fare search, PNR create/modify/void, queue handling, ticket issuance.",
     items: [
-      { label: "Amadeus", status: "full" },
+      {
+        label: "Amadeus — fare search + PNR creation",
+        status: "partial",
+        note: "Self-service sandbox only",
+      },
+      {
+        label: "Amadeus — ticket issuance",
+        status: "blocked",
+        note: "Needs enterprise tier",
+      },
       { label: "Sabre", status: "planned" },
       { label: "Travelport / Galileo", status: "planned" },
-      { label: "TBO", status: "planned" },
-      { label: "Riya", status: "planned" },
       { label: "Airline NDC feeds", status: "planned" },
     ],
   },
@@ -39,8 +50,21 @@ const GROUPS: Array<{
     heading: "Hotels & land",
     description: "Availability, pricing, booking, voucher issuance.",
     items: [
-      { label: "Hotelbeds", status: "planned" },
-      { label: "TBO Hotels", status: "planned" },
+      {
+        label: "TBO — hotel search + price re-check",
+        status: "full",
+        note: "Real HTTP wiring",
+      },
+      {
+        label: "TBO — hotel booking / cancel / read",
+        status: "blocked",
+        note: "Sandbox creds needed",
+      },
+      {
+        label: "Hotelbeds",
+        status: "planned",
+        note: "Decision pending",
+      },
       { label: "Direct hotel contracts", status: "planned" },
     ],
   },
@@ -49,7 +73,16 @@ const GROUPS: Array<{
     description:
       "Chart-of-accounts read, journal posting, invoice creation, statement read.",
     items: [
-      { label: "Tally", status: "full" },
+      {
+        label: "Tally Prime — journal + invoice XML protocol",
+        status: "partial",
+        note: "Schema + builders done",
+      },
+      {
+        label: "Tally Prime — desktop bridge (Tauri)",
+        status: "blocked",
+        note: "Local :9000 endpoint, real instance needed",
+      },
       { label: "Zoho Books", status: "planned" },
       { label: "Busy", status: "planned" },
       { label: "QuickBooks", status: "planned" },
@@ -62,7 +95,16 @@ const GROUPS: Array<{
     description:
       "Many have no API — these are browser-automated via the Playwright runner.",
     items: [
-      { label: "VFS Global", status: "partial" },
+      {
+        label: "VFS Global — browser-runner skeleton",
+        status: "partial",
+        note: "Per-tenant selectors required",
+      },
+      {
+        label: "VFS Global — CAPTCHA / MFA handoff",
+        status: "full",
+        note: "Routes to PermanentError for human",
+      },
       { label: "BLS International", status: "planned" },
       { label: "Embassy / consulate portals", status: "planned" },
     ],
@@ -71,7 +113,15 @@ const GROUPS: Array<{
     heading: "Statements & settlement",
     description: "BSP, card and bank statement parsing + reconciliation.",
     items: [
-      { label: "BSPlink India", status: "full" },
+      {
+        label: "BSP India — HAF file parser",
+        status: "full",
+        note: "164-airline allow-list",
+      },
+      {
+        label: "BSP India — settlement posting workflow",
+        status: "planned",
+      },
       { label: "BSP UAE", status: "planned" },
       { label: "BSP UK", status: "planned" },
       { label: "Corporate card statements", status: "planned" },
@@ -87,6 +137,17 @@ const GROUPS: Array<{
       { label: "Razorpay", status: "planned" },
       { label: "Stripe", status: "planned" },
       { label: "Payment links", status: "planned" },
+    ],
+  },
+  {
+    heading: "LLM platform",
+    description: "Agent loop, prompt caching, streaming.",
+    items: [
+      {
+        label: "Anthropic — agent loop with prompt caching",
+        status: "full",
+        note: "Native streaming via SSE",
+      },
     ],
   },
 ];
@@ -108,6 +169,9 @@ export default function IntegrationsPage() {
             <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 font-medium uppercase tracking-wider text-amber-700">
               Partial
             </span>
+            <span className="rounded-full border border-rose-200 bg-rose-50 px-2.5 py-0.5 font-medium uppercase tracking-wider text-rose-700">
+              Blocked on credentials
+            </span>
             <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 font-medium uppercase tracking-wider text-slate-600">
               Planned
             </span>
@@ -128,11 +192,17 @@ export default function IntegrationsPage() {
             </div>
             <div className="mt-6 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
               {group.items.map((item) => (
-                <IntegrationBadge
-                  key={item.label}
-                  label={item.label}
-                  status={item.status}
-                />
+                <div key={item.label} className="flex flex-col gap-1">
+                  <IntegrationBadge
+                    label={item.label}
+                    status={item.status}
+                  />
+                  {item.note ? (
+                    <p className="px-1 text-xs text-slate-500">
+                      {item.note}
+                    </p>
+                  ) : null}
+                </div>
               ))}
             </div>
           </section>

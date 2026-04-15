@@ -42,7 +42,7 @@ const LAYERS = [
     name: "Layer 4 — Agents",
     summary:
       "Orchestrator, three domain agents (ticketing_visa, hotels_holidays, accounting), cross-cutting agents (document_verifier, reconciler, reporter).",
-    body: "The Anthropic Python SDK with prompt caching enabled from day one, wrapped in our own orchestrator and per-domain state machines: enquiry → quote → book → deliver → post-sale.",
+    body: "The Anthropic Python SDK with prompt caching enabled from day one, wrapped in our own in-process orchestrator running inside services/agent_runtime and streamed to clients over FastAPI SSE. No Temporal in v0 — ADR D11 supersedes the workflow-engine portion of D9.",
   },
   {
     name: "Layer 5 — Clients",
@@ -86,6 +86,40 @@ export default function ArchitecturePage() {
             </p>
           </article>
         ))}
+
+        <article className="rounded-2xl border border-slate-200 bg-white p-7 shadow-soft-md">
+          <h2 className="text-xl font-bold tracking-tight text-slate-900 md:text-2xl">
+            Deployment — single Ubuntu host, native processes
+          </h2>
+          <p className="mt-3 text-base font-medium text-primary">
+            systemd-supervised processes on one Ubuntu 22.04 box. No Docker in
+            the request path. No Temporal. No Kubernetes.
+          </p>
+          <ul className="mt-3 space-y-2 text-base leading-relaxed text-slate-700">
+            <li>
+              Three systemd units: voyagent-api (uvicorn on :8010),
+              voyagent-web (next start on :3011), voyagent-marketing (next
+              start on :3012).
+            </li>
+            <li>
+              Native Postgres 16 on 127.0.0.1:5432 and native Redis 7 on
+              127.0.0.1:6379 — one shared host instance, not a container.
+            </li>
+            <li>
+              Single host nginx with certbot for TLS. The earlier two-nginx
+              layout has been retired.
+            </li>
+            <li>
+              Cookie-based auth on web (voyagent_at, httpOnly); SecureStore on
+              mobile and desktop. Multi-tenant isolation rides a JWT-derived
+              tenant_id on every query.
+            </li>
+            <li>
+              Pydantic v2 to OpenAPI to TypeScript codegen is on the roadmap,
+              not shipped.
+            </li>
+          </ul>
+        </article>
 
         <div className="rounded-2xl border border-primary-100 bg-primary-50/60 p-7">
           <h3 className="text-lg font-semibold text-slate-900">

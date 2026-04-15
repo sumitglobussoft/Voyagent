@@ -8,9 +8,24 @@ import { absoluteUrl } from "@/lib/site";
 export const metadata: Metadata = {
   title: "Ticketing & Visa",
   description:
-    "Enquiry to issuance to web check-in. Multi-GDS fare search, PNR operations, visa portal automation, and schedule-change handling.",
+    "Chat-driven enquiry to quote with the ticketing_visa agent. Amadeus self-service fare search + PNR creation live today; ticket issuance and VFS automation are gated on credentials and selectors.",
   alternates: { canonical: absoluteUrl("/domains/ticketing-visa") },
 };
+
+const LIVE_TODAY = [
+  "Chat-driven enquiry to quote via the ticketing_visa agent",
+  "Amadeus self-service sandbox for fare search and PNR creation",
+  "BSP India HAF file parser with a 164-airline IATA allow-list",
+  "VFS portal browser-runner skeleton (routing, session, handoff)",
+  "CAPTCHA / MFA handoff from VFS runner to a human (PermanentError route)",
+];
+
+const SHIPPING_NEXT = [
+  "Amadeus production tier for real ticket issuance (blocked on enterprise credentials)",
+  "Per-tenant VFS selectors for automated visa form fill and appointment booking",
+  "BSP India settlement posting workflow",
+  "Sabre, Travelport / Galileo, TBO and airline NDC feeds as additional drivers",
+];
 
 const ACTIVITIES = [
   "Identify destination, dates, passenger types, departure city, airline and flight preferences",
@@ -36,8 +51,8 @@ export default function TicketingVisaPage() {
         <div className="mx-auto w-full max-w-shell px-5 py-20 md:px-8 md:py-24">
           <SectionHeader
             eyebrow="Domain · Ticketing & Visa"
-            title="From enquiry to issuance, across every GDS and portal."
-            description="Voyagent drives the full ticketing + visa workflow in one chat — fare search, PNR operations, visa portal automation (including the browser-automated ones without APIs), and post-booking follow-through."
+            title="Enquiry to quote in one chat. Issuance and portal automation on deck."
+            description="The ticketing_visa agent runs fare search and PNR creation against the Amadeus self-service sandbox today. Ticket issuance is blocked on enterprise-tier credentials; VFS automation is blocked on per-tenant selectors. The full activity inventory below is the roadmap — the list above it is what actually runs on main."
           />
         </div>
       </section>
@@ -47,12 +62,58 @@ export default function TicketingVisaPage() {
 
         <section>
           <h2 className="text-2xl font-bold tracking-tighter text-slate-900">
-            Representative activities
+            Live today
           </h2>
           <p className="mt-2 text-sm text-slate-600">
-            Drawn from the verbatim activity inventory. Full coverage of the
-            customer&rsquo;s ticketing &amp; visa workload is the goal; the
-            items below are representative, not exhaustive.
+            Running on main against the deployed environment.
+          </p>
+          <ul className="mt-6 grid gap-3 text-sm text-slate-700 md:grid-cols-2">
+            {LIVE_TODAY.map((a) => (
+              <li
+                key={a}
+                className="flex gap-3 rounded-lg border border-emerald-200 bg-emerald-50/40 px-4 py-3"
+              >
+                <span
+                  aria-hidden="true"
+                  className="mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-emerald-500"
+                />
+                <span>{a}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <section>
+          <h2 className="text-2xl font-bold tracking-tighter text-slate-900">
+            Shipping next
+          </h2>
+          <p className="mt-2 text-sm text-slate-600">
+            Gated on credentials, selectors or additional driver work. Not live today.
+          </p>
+          <ul className="mt-6 grid gap-3 text-sm text-slate-700 md:grid-cols-2">
+            {SHIPPING_NEXT.map((a) => (
+              <li
+                key={a}
+                className="flex gap-3 rounded-lg border border-amber-200 bg-amber-50/40 px-4 py-3"
+              >
+                <span
+                  aria-hidden="true"
+                  className="mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-amber-500"
+                />
+                <span>{a}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <section>
+          <h2 className="text-2xl font-bold tracking-tighter text-slate-900">
+            Representative activity inventory
+          </h2>
+          <p className="mt-2 text-sm text-slate-600">
+            Drawn from the verbatim activity inventory of a working agency. This
+            is the domain surface the ticketing_visa agent is being built to
+            cover; not every item is wired end-to-end today.
           </p>
           <ul className="mt-6 grid gap-3 text-sm text-slate-700 md:grid-cols-2">
             {ACTIVITIES.map((a) => (

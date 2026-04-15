@@ -13,5 +13,5 @@
     "allowSyntheticDefaultImports": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["specs/**/*.ts", "playwright.config.ts"]
+  "include": ["specs/**/*.ts", "fixtures/**/*.ts", "playwright.config.ts"]
 }

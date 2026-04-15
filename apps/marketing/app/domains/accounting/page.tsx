@@ -8,9 +8,22 @@ import { absoluteUrl } from "@/lib/site";
 export const metadata: Metadata = {
   title: "Accounting & Finance",
   description:
-    "Invoicing, collections, supplier payments, BSP / card / bank reconciliation, GST and TDS — posted into the accounting stack you already use.",
+    "Chat-driven journal posting via the accounting agent, double-entry invariant enforced in code, receivables / payables aging, and a Tally XML protocol layer. Desktop bridge to a real Tally instance is in progress.",
   alternates: { canonical: absoluteUrl("/domains/accounting") },
 };
+
+const LIVE_TODAY = [
+  "Chat-driven journal posting via the accounting agent",
+  "Double-entry journal_entries table with the debit==credit invariant enforced in code",
+  "invoices and bills tables with /reports/receivables and /reports/payables aging buckets (0-30 / 31-60 / 61-90 / 90+)",
+  "Tally driver XML protocol layer — list_accounts, post_journal, create_invoice request shapes",
+];
+
+const SHIPPING_NEXT = [
+  "End-to-end Tally XML-over-:9000 round-trip via the Tauri desktop bridge (blocked on a real Tally instance)",
+  "BSP India settlement posting workflow",
+  "Zoho Books, Busy, QuickBooks, SAP and Marg as additional accounting drivers",
+];
 
 const ACTIVITIES = [
   "Create invoices, send to clients, maintain billing records, prepare and share statements",
@@ -41,8 +54,8 @@ export default function AccountingPage() {
         <div className="mx-auto w-full max-w-shell px-5 py-20 md:px-8 md:py-24">
           <SectionHeader
             eyebrow="Domain · Accounting & Finance"
-            title="Books accountants will actually sign off on."
-            description="Voyagent doesn't replace your accounting system — it drives it. Invoices, receipts, supplier payments, BSP reconciliation, GST, TDS, and management reports, all posted into Tally today and Zoho / Busy / QuickBooks / SAP on the roadmap."
+            title="Double-entry discipline, driven from chat."
+            description="Voyagent doesn't replace your accounting system — it drives it. Journals post through the accounting agent with the debit==credit invariant enforced in code; receivables and payables age into 0-30 / 31-60 / 61-90 / 90+ buckets; the Tally XML protocol layer is built and waiting on the desktop bridge round-trip to a real instance."
           />
         </div>
       </section>
@@ -52,12 +65,58 @@ export default function AccountingPage() {
 
         <section>
           <h2 className="text-2xl font-bold tracking-tighter text-slate-900">
-            Representative activities
+            Live today
           </h2>
           <p className="mt-2 text-sm text-slate-600">
-            Drawn from the verbatim activity inventory. Full accounting and
-            statutory coverage is the goal; the items below are
-            representative, not exhaustive.
+            Running on main against the deployed environment.
+          </p>
+          <ul className="mt-6 grid gap-3 text-sm text-slate-700 md:grid-cols-2">
+            {LIVE_TODAY.map((a) => (
+              <li
+                key={a}
+                className="flex gap-3 rounded-lg border border-emerald-200 bg-emerald-50/40 px-4 py-3"
+              >
+                <span
+                  aria-hidden="true"
+                  className="mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-emerald-500"
+                />
+                <span>{a}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <section>
+          <h2 className="text-2xl font-bold tracking-tighter text-slate-900">
+            Shipping next
+          </h2>
+          <p className="mt-2 text-sm text-slate-600">
+            Gated on a real Tally instance or additional driver work. Not live today.
+          </p>
+          <ul className="mt-6 grid gap-3 text-sm text-slate-700 md:grid-cols-2">
+            {SHIPPING_NEXT.map((a) => (
+              <li
+                key={a}
+                className="flex gap-3 rounded-lg border border-amber-200 bg-amber-50/40 px-4 py-3"
+              >
+                <span
+                  aria-hidden="true"
+                  className="mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-amber-500"
+                />
+                <span>{a}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <section>
+          <h2 className="text-2xl font-bold tracking-tighter text-slate-900">
+            Representative activity inventory
+          </h2>
+          <p className="mt-2 text-sm text-slate-600">
+            Drawn from the verbatim activity inventory of a working agency. This
+            is the domain surface the accounting agent is being built to cover;
+            not every item is wired end-to-end today.
           </p>
           <ul className="mt-6 grid gap-3 text-sm text-slate-700 md:grid-cols-2">
             {ACTIVITIES.map((a) => (

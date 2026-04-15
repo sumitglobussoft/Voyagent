@@ -111,7 +111,7 @@ function ChatMock() {
           <li>Visa: eligible on UAE e-visa (30-day)</li>
         </ul>
         <div className="mt-2 text-slate-500">
-          Checking Amadeus + Hotelbeds&hellip;
+          Checking Amadeus + TBO&hellip;
         </div>
       </Bubble>
       <Bubble role="agent">
