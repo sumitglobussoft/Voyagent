@@ -62,8 +62,9 @@ export function MessageList({
       role="log"
       aria-live="polite"
       aria-label="Agent conversation"
-      className="flex flex-1 flex-col gap-3 overflow-y-auto p-4"
+      className="voyagent-scroll-y flex flex-1 flex-col"
     >
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6 md:px-6 md:py-8">
       {messages.map((message, i) => {
         if (message.kind === "user") {
           // The previous assistant bubble before the next user message
@@ -107,6 +108,7 @@ export function MessageList({
       })}
       <div ref={endRef} />
     </div>
+    </div>
   );
 }
 
@@ -118,8 +120,11 @@ function UserBubble({
   messageId: string;
 }): ReactElement {
   return (
-    <div className="group flex flex-col items-end" data-message-id={messageId}>
-      <div className="max-w-[80%] rounded-lg bg-neutral-900 px-3 py-2 text-sm text-neutral-50 whitespace-pre-wrap">
+    <div
+      className="group flex flex-col items-end gap-1"
+      data-message-id={messageId}
+    >
+      <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-neutral-900 px-4 py-3 text-[15px] leading-relaxed text-neutral-50 shadow-sm">
         {text}
       </div>
       <MessageActions text={text} />
@@ -139,29 +144,34 @@ function AssistantBubble({
   onRegenerate?: () => void | Promise<void>;
 }): ReactElement {
   return (
-    <div className="group flex flex-col items-start">
-      <div className="max-w-[80%] rounded-lg bg-neutral-100 px-3 py-2 text-sm text-neutral-900">
-        {message.text.length > 0 ? <Markdown text={message.text} /> : null}
-        {message.toolCalls.map((call) => (
-          <ToolCallCard key={call.tool_call_id} call={call} />
-        ))}
-        {message.error !== undefined ? (
-          <div
-            role="alert"
-            className="mt-2 rounded border border-red-300 bg-red-50 px-2 py-1 text-xs text-red-700"
-          >
-            {message.error}
-          </div>
+    <div className="group flex items-start gap-3">
+      <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-neutral-900 to-neutral-700 text-xs font-semibold text-white shadow-sm">
+        V
+      </div>
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <div className="prose prose-sm max-w-none text-[15px] leading-relaxed text-neutral-900">
+          {message.text.length > 0 ? <Markdown text={message.text} /> : null}
+          {message.toolCalls.map((call) => (
+            <ToolCallCard key={call.tool_call_id} call={call} />
+          ))}
+          {message.error !== undefined ? (
+            <div
+              role="alert"
+              className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700"
+            >
+              {message.error}
+            </div>
+          ) : null}
+        </div>
+        {message.complete ? (
+          <MessageActions
+            text={message.text}
+            canRegenerate={canRegenerate}
+            onRegenerate={onRegenerate}
+            alwaysVisible={isLatest}
+          />
         ) : null}
       </div>
-      {message.complete ? (
-        <MessageActions
-          text={message.text}
-          canRegenerate={canRegenerate}
-          onRegenerate={onRegenerate}
-          alwaysVisible={isLatest}
-        />
-      ) : null}
     </div>
   );
 }

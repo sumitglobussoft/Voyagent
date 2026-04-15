@@ -70,30 +70,51 @@ export function ComposerBar(props: ComposerBarProps): ReactElement {
   }, []);
 
   return (
-    <form
-      className="flex items-end gap-2 border-t border-neutral-200 bg-white p-3"
-      onSubmit={(e) => {
-        void submit(e);
-      }}
-    >
-      <textarea
-        className="flex-1 resize-none rounded border border-neutral-300 bg-white px-3 py-2 text-sm focus:border-neutral-500 focus:outline-none disabled:bg-neutral-100 disabled:text-neutral-500"
-        rows={2}
-        value={value}
-        disabled={disabled}
-        placeholder={disabled && disabledReason ? disabledReason : placeholder}
-        onChange={onChange}
-        onKeyDown={onKeyDown}
-        aria-label="Message input"
-      />
-      <button
-        type="submit"
-        disabled={disabled || value.trim().length === 0}
-        className="rounded bg-neutral-900 px-3 py-2 text-sm text-neutral-50 disabled:cursor-not-allowed disabled:bg-neutral-400"
-        title={disabled ? disabledReason : undefined}
+    <div className="border-t border-neutral-200 bg-gradient-to-t from-neutral-50 to-white px-4 py-4 md:px-6 md:py-5">
+      <form
+        className="mx-auto flex w-full max-w-3xl items-end gap-3"
+        onSubmit={(e) => {
+          void submit(e);
+        }}
       >
-        Send
-      </button>
-    </form>
+        <div className="flex flex-1 items-end rounded-2xl border border-neutral-300 bg-white px-4 py-3 shadow-sm focus-within:border-neutral-500 focus-within:ring-2 focus-within:ring-neutral-200">
+          <textarea
+            className="flex-1 resize-none bg-transparent text-[15px] leading-relaxed placeholder:text-neutral-400 focus:outline-none disabled:text-neutral-400"
+            rows={2}
+            value={value}
+            disabled={disabled}
+            placeholder={disabled && disabledReason ? disabledReason : placeholder}
+            onChange={onChange}
+            onKeyDown={onKeyDown}
+            aria-label="Message input"
+          />
+        </div>
+        <button
+          type="submit"
+          disabled={disabled || value.trim().length === 0}
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-neutral-900 text-white shadow-sm transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:bg-neutral-300 disabled:shadow-none"
+          title={disabled ? disabledReason : "Send (Cmd/Ctrl + Enter)"}
+          aria-label="Send message"
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M12 19V5" />
+            <path d="M5 12l7-7 7 7" />
+          </svg>
+        </button>
+      </form>
+      <p className="mx-auto mt-2 max-w-3xl text-center text-[11px] text-neutral-400">
+        Voyagent can make mistakes. Finance-critical actions require approval.
+      </p>
+    </div>
   );
 }

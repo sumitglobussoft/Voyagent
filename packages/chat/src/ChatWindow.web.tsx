@@ -160,7 +160,7 @@ function ChatBody({
   const isEmpty = stream.messages.length === 0 && !stream.isStreaming;
 
   return (
-    <div className="flex h-full flex-col bg-white text-neutral-900">
+    <div className="flex h-full flex-col bg-neutral-50 text-neutral-900">
       <SessionHeader title={title} createdAt={createdAt} />
       {isEmpty ? (
         <EmptyState onPick={(s) => setSeedText(s)} />

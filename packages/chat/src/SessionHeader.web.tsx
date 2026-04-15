@@ -31,23 +31,25 @@ export function SessionHeader(props: SessionHeaderProps): ReactElement {
 
   return (
     <header
-      className="flex items-center justify-between border-b border-neutral-200 bg-white px-4 py-2"
+      className="sticky top-0 z-10 flex items-center justify-between border-b border-neutral-200 bg-white/90 px-6 py-3 backdrop-blur"
       data-testid="session-header"
     >
       <div className="flex items-center gap-2">
-        <span className="text-sm font-medium text-neutral-900">{display}</span>
+        <span className="truncate text-sm font-semibold text-neutral-900">
+          {display}
+        </span>
         {isAutoTitle ? (
           <span
             title="Titles are auto-generated from your first message."
             className="cursor-help text-xs text-neutral-400"
             aria-label="Auto-generated title"
           >
-            (i)
+            (auto)
           </span>
         ) : null}
       </div>
       {formatted ? (
-        <span className="text-xs text-neutral-500">{formatted}</span>
+        <span className="text-xs text-neutral-400">{formatted}</span>
       ) : null}
     </header>
   );
