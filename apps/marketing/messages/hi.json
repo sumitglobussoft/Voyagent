@@ -1,0 +1,21 @@
+{
+  "nav.product": "उत्पाद",
+  "nav.features": "विशेषताएँ",
+  "nav.architecture": "आर्किटेक्चर",
+  "nav.integrations": "एकीकरण",
+  "nav.security": "सुरक्षा",
+  "nav.pricing": "मूल्य निर्धारण",
+  "nav.changelog": "चेंजलॉग",
+  "nav.docs": "दस्तावेज़",
+  "nav.apiReference": "एपीआई संदर्भ",
+
+  "hero.signIn": "साइन इन",
+  "hero.getStarted": "शुरू करें",
+
+  "docs.api.title": "एपीआई संदर्भ",
+  "docs.api.subtitle": "वॉयजेंट प्लेटफ़ॉर्म द्वारा उजागर किए गए सभी एंडपॉइंट्स, पथ के अनुसार समूहीकृत।",
+  "docs.api.unavailable": "एपीआई संदर्भ अस्थायी रूप से अनुपलब्ध है",
+
+  "common.loading": "लोड हो रहा है...",
+  "common.error": "त्रुटि"
+}

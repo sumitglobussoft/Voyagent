@@ -188,6 +188,20 @@ class SendMessageRequest(BaseModel):
     approvals: dict[str, bool] | None = None
 
 
+class SessionRenameRequest(BaseModel):
+    """Body for ``PATCH /chat/sessions/{id}``.
+
+    Only ``title`` is supported today; new optional fields can land
+    here without a breaking wire change. ``min_length=1`` blocks an
+    empty-string rename (422); the route also trims whitespace before
+    the length check so "   " fails validation.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    title: str = Field(min_length=1, max_length=200)
+
+
 # --------------------------------------------------------------------------- #
 # Endpoints.                                                                  #
 # --------------------------------------------------------------------------- #
@@ -574,3 +588,176 @@ async def send_message(
                 pass
 
     return EventSourceResponse(with_heartbeats())
+
+
+# --------------------------------------------------------------------------- #
+# Session CRUD: delete + rename.                                              #
+# --------------------------------------------------------------------------- #
+
+
+@router.delete(
+    "/sessions/{session_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_session(
+    session_id: str,
+    tenant_ctx: TenantContext = Depends(get_tenant),
+) -> None:
+    """Delete a chat session and cascade to messages + pending approvals.
+
+    Tenant-scoped: a session belonging to another tenant returns 404
+    (never 403 — we refuse to confirm existence across tenants). The
+    SQL FKs on ``messages.session_id`` and ``pending_approvals.session_id``
+    are both ``ON DELETE CASCADE``, so a single DELETE on ``sessions``
+    wipes the child rows in the same transaction.
+
+    We also best-effort-drop the row from the in-memory session_store
+    so subsequent ``/chat/sessions/{id}`` reads return 404 immediately
+    without waiting for the store's TTL.
+    """
+    from sqlalchemy import text
+
+    try:
+        maker = get_sessionmaker()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"db_unavailable: {exc}",
+        )
+
+    async with maker() as db:
+        # Confirm ownership before we delete. A row in a different
+        # tenant surfaces as 404 so we can't probe existence.
+        row = (
+            await db.execute(
+                text(
+                    "SELECT tenant_id FROM sessions WHERE id = :sid"
+                ),
+                {"sid": session_id},
+            )
+        ).first()
+        if row is None or str(row[0]) != str(tenant_ctx.tenant_id):
+            raise HTTPException(
+                status_code=404, detail="session_not_found"
+            )
+
+        # Cascade child rows explicitly in case the FK isn't ON DELETE
+        # CASCADE on the current dialect (SQLite under tests honours it;
+        # older schemas might not).
+        await db.execute(
+            text("DELETE FROM pending_approvals WHERE session_id = :sid"),
+            {"sid": session_id},
+        )
+        await db.execute(
+            text("DELETE FROM messages WHERE session_id = :sid"),
+            {"sid": session_id},
+        )
+        await db.execute(
+            text("DELETE FROM sessions WHERE id = :sid"),
+            {"sid": session_id},
+        )
+        await db.commit()
+
+    # Best-effort in-memory eviction; don't fail if the bundle never
+    # booted.
+    try:
+        if _bundle is not None:
+            store = getattr(_bundle, "session_store", None)
+            if store is not None and hasattr(store, "delete"):
+                await store.delete(session_id)  # type: ignore[func-returns-value]
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("chat.session.delete store_evict_failed: %s", exc)
+
+    return None
+
+
+@router.patch(
+    "/sessions/{session_id}",
+    response_model=SessionSummaryResponse,
+)
+async def rename_session(
+    session_id: str,
+    body: SessionRenameRequest,
+    tenant_ctx: TenantContext = Depends(get_tenant),
+) -> SessionSummaryResponse:
+    """Update a session's title. Only ``title`` is mutable today.
+
+    Returns the updated :class:`SessionSummaryResponse` on success,
+    404 if the session doesn't exist or belongs to another tenant.
+    """
+    # Trim then re-validate — the Pydantic model accepts e.g. "  " as
+    # a non-empty string; we want that to be 422.
+    trimmed = body.title.strip()
+    if not trimmed:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="title_empty",
+        )
+    if len(trimmed) > 200:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="title_too_long",
+        )
+
+    from sqlalchemy import text
+
+    try:
+        maker = get_sessionmaker()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"db_unavailable: {exc}",
+        )
+
+    async with maker() as db:
+        row = (
+            await db.execute(
+                text(
+                    "SELECT tenant_id, title FROM sessions WHERE id = :sid"
+                ),
+                {"sid": session_id},
+            )
+        ).first()
+        if row is None or str(row[0]) != str(tenant_ctx.tenant_id):
+            raise HTTPException(
+                status_code=404, detail="session_not_found"
+            )
+
+        await db.execute(
+            text("UPDATE sessions SET title = :title WHERE id = :sid"),
+            {"title": trimmed, "sid": session_id},
+        )
+        # Count messages for the response shape.
+        msg_count_row = (
+            await db.execute(
+                text(
+                    "SELECT COUNT(*) FROM messages WHERE session_id = :sid"
+                ),
+                {"sid": session_id},
+            )
+        ).first()
+        await db.commit()
+        msg_count = int(msg_count_row[0] if msg_count_row else 0)
+
+    # Best-effort in-memory sync.
+    try:
+        if _bundle is not None:
+            store = getattr(_bundle, "session_store", None)
+            if store is not None and hasattr(store, "get"):
+                sess = await store.get(session_id)
+                if sess is not None:
+                    try:
+                        sess.title = trimmed  # type: ignore[attr-defined]
+                    except Exception:  # noqa: BLE001
+                        pass
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("chat.session.rename store_sync_failed: %s", exc)
+
+    return SessionSummaryResponse(
+        session_id=session_id,
+        tenant_id=tenant_ctx.tenant_id,
+        actor_id=tenant_ctx.user_id,
+        message_count=msg_count,
+        pending_approvals=[],
+        title=trimmed,
+    )

@@ -8,6 +8,8 @@
  */
 import type { ReactNode } from "react";
 
+import { AppProviders } from "@/components/AppProviders";
+
 import "./globals.css";
 
 export const metadata = {
@@ -17,9 +19,9 @@ export const metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
-      <body className="bg-neutral-50 font-sans text-neutral-900 antialiased">
-        {children}
+    <html lang="en" suppressHydrationWarning>
+      <body className="bg-neutral-50 font-sans text-neutral-900 antialiased dark:bg-neutral-950 dark:text-neutral-100">
+        <AppProviders>{children}</AppProviders>
       </body>
     </html>
   );

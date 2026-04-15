@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 
@@ -317,11 +317,51 @@ async def list_enquiries(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     q: str | None = Query(None, max_length=255),
+    customer_email: str | None = Query(None, max_length=255),
+    destination: str | None = Query(None, max_length=128),
+    origin: str | None = Query(None, max_length=128),
+    depart_from: date | None = Query(None),
+    depart_to: date | None = Query(None),
+    created_from: date | None = Query(None),
+    created_to: date | None = Query(None),
     principal: AuthenticatedPrincipal = Depends(get_current_principal),
     db: AsyncSession = Depends(db_session),
 ) -> EnquiryListResponse:
-    """List enquiries for the caller's tenant, most-recent-first."""
+    """List enquiries for the caller's tenant, most-recent-first.
+
+    Advanced filters (all optional, all ANDed together):
+
+    * ``customer_email`` / ``destination`` / ``origin`` — case-insensitive
+      substring (ILIKE ``%term%``)
+    * ``depart_from`` / ``depart_to`` — inclusive date range on
+      ``depart_date``
+    * ``created_from`` / ``created_to`` — inclusive date range on
+      ``created_at``. ``created_to`` is widened to 23:59:59 UTC so a
+      single-day bracket matches rows created at any time that day.
+
+    422 is returned when either date range has ``from > to``.
+    """
     tenant_uuid = _tenant_uuid(principal)
+
+    # Date range validation (422 on inverted ranges).
+    if (
+        depart_from is not None
+        and depart_to is not None
+        and depart_from > depart_to
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="invalid_depart_range",
+        )
+    if (
+        created_from is not None
+        and created_to is not None
+        and created_from > created_to
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="invalid_created_range",
+        )
 
     base = select(EnquiryRow).where(EnquiryRow.tenant_id == tenant_uuid)
     count_base = (
@@ -334,6 +374,40 @@ async def list_enquiries(
         enum_value = EnquiryStatusEnum(enquiry_status)
         base = base.where(EnquiryRow.status == enum_value)
         count_base = count_base.where(EnquiryRow.status == enum_value)
+
+    # Advanced per-column substring filters.
+    if customer_email:
+        pat = f"%{customer_email}%"
+        base = base.where(EnquiryRow.customer_email.ilike(pat))
+        count_base = count_base.where(EnquiryRow.customer_email.ilike(pat))
+    if destination:
+        pat = f"%{destination}%"
+        base = base.where(EnquiryRow.destination.ilike(pat))
+        count_base = count_base.where(EnquiryRow.destination.ilike(pat))
+    if origin:
+        pat = f"%{origin}%"
+        base = base.where(EnquiryRow.origin.ilike(pat))
+        count_base = count_base.where(EnquiryRow.origin.ilike(pat))
+
+    # Date ranges.
+    if depart_from is not None:
+        base = base.where(EnquiryRow.depart_date >= depart_from)
+        count_base = count_base.where(EnquiryRow.depart_date >= depart_from)
+    if depart_to is not None:
+        base = base.where(EnquiryRow.depart_date <= depart_to)
+        count_base = count_base.where(EnquiryRow.depart_date <= depart_to)
+    if created_from is not None:
+        start_dt = datetime.combine(
+            created_from, datetime.min.time(), tzinfo=timezone.utc
+        )
+        base = base.where(EnquiryRow.created_at >= start_dt)
+        count_base = count_base.where(EnquiryRow.created_at >= start_dt)
+    if created_to is not None:
+        end_dt = datetime.combine(
+            created_to, datetime.max.time(), tzinfo=timezone.utc
+        )
+        base = base.where(EnquiryRow.created_at <= end_dt)
+        count_base = count_base.where(EnquiryRow.created_at <= end_dt)
 
     if q:
         pattern = f"%{q}%"

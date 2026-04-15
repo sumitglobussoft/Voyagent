@@ -167,6 +167,23 @@ class PendingApprovalRow(Base):
         nullable=False,
         server_default=ApprovalStatusEnum.PENDING.value,
     )
+    # Raw tool-call args captured by the runtime at approval-request
+    # time. The API exposes this verbatim so the UI can pretty-print
+    # whatever the tool was about to do. Default ``{}`` so existing
+    # rows + runtime code paths that haven't started writing it yet
+    # both round-trip cleanly.
+    payload: Mapped[dict] = mapped_column(
+        _jsonb(),
+        nullable=False,
+        default=dict,
+        server_default="{}",
+    )
+    # Populated by the /approvals/{id}/resolve endpoint when a human
+    # grants or rejects the row. NULL until the row is resolved.
+    resolved_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     __table_args__ = (
         Index("ix_pending_approvals_session", "session_id", "requested_at"),

@@ -89,7 +89,8 @@ export default async function AuditPage({
     offset?: string;
   }>;
 }) {
-  await requireUser();
+  const user = await requireUser();
+  const isAdmin = user.role === "agency_admin";
   const params = (await searchParams) ?? {};
 
   const actorId = (params.actor_id ?? "").trim();
@@ -259,6 +260,38 @@ export default async function AuditPage({
           >
             Clear
           </Link>
+        ) : null}
+        {isAdmin ? (
+          <a
+            href={`/api/audit/export.csv?${(() => {
+              const u = new URLSearchParams();
+              if (actorId && isUuidish(actorId)) u.set("actor_id", actorId);
+              if (kind !== "all") u.set("kind", kind);
+              if (fromDate) u.set("from", fromDate);
+              if (toDate) u.set("to", toDate);
+              return u.toString();
+            })()}`}
+            /*
+             * Plain anchor (not <Link>) so the browser treats this as
+             * a navigation to a non-HTML resource and the
+             * Content-Disposition: attachment header on the response
+             * triggers a download rather than a page render. Only
+             * shown to agency admins — non-admins get 403 from the
+             * API anyway, but hiding the button is a nicer UX.
+             */
+            style={{
+              fontSize: 13,
+              background: "#f3f4f6",
+              border: "1px solid #d4d4d8",
+              borderRadius: 6,
+              padding: "6px 12px",
+              textDecoration: "none",
+              color: "#18181b",
+              marginLeft: "auto",
+            }}
+          >
+            Export CSV
+          </a>
         ) : null}
       </form>
 

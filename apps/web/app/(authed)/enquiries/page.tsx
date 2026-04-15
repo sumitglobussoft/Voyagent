@@ -62,7 +62,19 @@ function parseOffset(v: string | undefined): number {
 export default async function EnquiriesPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ status?: string; q?: string; offset?: string }>;
+  searchParams?: Promise<{
+    status?: string;
+    q?: string;
+    offset?: string;
+    customer_email?: string;
+    destination?: string;
+    origin?: string;
+    depart_from?: string;
+    depart_to?: string;
+    created_from?: string;
+    created_to?: string;
+    advanced?: string;
+  }>;
 }) {
   await requireUser();
   const params = (await searchParams) ?? {};
@@ -71,12 +83,39 @@ export default async function EnquiriesPage({
     : "all";
   const q = (params.q ?? "").trim();
   const offset = parseOffset(params.offset);
+  // Advanced filters — each optional, each ANDed on the API side.
+  const customerEmail = (params.customer_email ?? "").trim();
+  const destinationFilter = (params.destination ?? "").trim();
+  const originFilter = (params.origin ?? "").trim();
+  const departFrom = (params.depart_from ?? "").trim();
+  const departTo = (params.depart_to ?? "").trim();
+  const createdFrom = (params.created_from ?? "").trim();
+  const createdTo = (params.created_to ?? "").trim();
+  // "advanced=1" keeps the collapsible open across submissions, and
+  // we also auto-open it when any advanced field is populated so
+  // users who deep-link see the state that drove the result set.
+  const hasAdvancedFilter =
+    Boolean(customerEmail) ||
+    Boolean(destinationFilter) ||
+    Boolean(originFilter) ||
+    Boolean(departFrom) ||
+    Boolean(departTo) ||
+    Boolean(createdFrom) ||
+    Boolean(createdTo);
+  const advancedOpen = params.advanced === "1" || hasAdvancedFilter;
 
   const qs = new URLSearchParams();
   qs.set("limit", String(PAGE_SIZE));
   qs.set("offset", String(offset));
   if (status !== "all") qs.set("status", status);
   if (q) qs.set("q", q);
+  if (customerEmail) qs.set("customer_email", customerEmail);
+  if (destinationFilter) qs.set("destination", destinationFilter);
+  if (originFilter) qs.set("origin", originFilter);
+  if (departFrom) qs.set("depart_from", departFrom);
+  if (departTo) qs.set("depart_to", departTo);
+  if (createdFrom) qs.set("created_from", createdFrom);
+  if (createdTo) qs.set("created_to", createdTo);
 
   const res = await apiGet<EnquiryList>(`/api/enquiries?${qs.toString()}`);
   const items = res.ok && res.data ? res.data.items : [];
@@ -92,6 +131,14 @@ export default async function EnquiriesPage({
     const u = new URLSearchParams();
     if (status !== "all") u.set("status", status);
     if (q) u.set("q", q);
+    if (customerEmail) u.set("customer_email", customerEmail);
+    if (destinationFilter) u.set("destination", destinationFilter);
+    if (originFilter) u.set("origin", originFilter);
+    if (departFrom) u.set("depart_from", departFrom);
+    if (departTo) u.set("depart_to", departTo);
+    if (createdFrom) u.set("created_from", createdFrom);
+    if (createdTo) u.set("created_to", createdTo);
+    if (advancedOpen) u.set("advanced", "1");
     u.set("offset", String(o));
     const s = u.toString();
     return s ? `/enquiries?${s}` : "/enquiries";
@@ -185,6 +232,99 @@ export default async function EnquiriesPage({
         >
           Apply
         </button>
+        {/*
+         * Advanced filters — the collapsible lives inside the same
+         * form so one Apply submission sends every field at once.
+         * ``advanced`` is a hidden input whose value is flipped by the
+         * "More filters" / "Fewer filters" links just above; keeping
+         * it inside the form preserves it on submit so the panel
+         * stays open across Apply.
+         */}
+        <details
+          open={advancedOpen}
+          className="w-full sm:w-full"
+          style={{ marginTop: 4 }}
+        >
+          <summary
+            className="cursor-pointer text-[13px] text-neutral-600"
+            style={{ listStyle: "none" }}
+          >
+            {advancedOpen ? "Fewer filters" : "More filters"}
+          </summary>
+          <input type="hidden" name="advanced" value="1" />
+          <div
+            className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3"
+            style={{ width: "100%" }}
+          >
+            <label className="flex flex-col gap-1 text-[12px] text-neutral-600">
+              Customer email
+              <input
+                type="search"
+                name="customer_email"
+                defaultValue={customerEmail}
+                placeholder="e.g. priya@"
+                className="rounded-md border border-neutral-300 px-2 py-1.5 text-sm"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-[12px] text-neutral-600">
+              Origin
+              <input
+                type="search"
+                name="origin"
+                defaultValue={originFilter}
+                placeholder="DEL"
+                className="rounded-md border border-neutral-300 px-2 py-1.5 text-sm"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-[12px] text-neutral-600">
+              Destination
+              <input
+                type="search"
+                name="destination"
+                defaultValue={destinationFilter}
+                placeholder="Dubai"
+                className="rounded-md border border-neutral-300 px-2 py-1.5 text-sm"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-[12px] text-neutral-600">
+              Depart from
+              <input
+                type="date"
+                name="depart_from"
+                defaultValue={departFrom}
+                className="rounded-md border border-neutral-300 px-2 py-1.5 text-sm"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-[12px] text-neutral-600">
+              Depart to
+              <input
+                type="date"
+                name="depart_to"
+                defaultValue={departTo}
+                className="rounded-md border border-neutral-300 px-2 py-1.5 text-sm"
+              />
+            </label>
+            <div />
+            <label className="flex flex-col gap-1 text-[12px] text-neutral-600">
+              Created from
+              <input
+                type="date"
+                name="created_from"
+                defaultValue={createdFrom}
+                className="rounded-md border border-neutral-300 px-2 py-1.5 text-sm"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-[12px] text-neutral-600">
+              Created to
+              <input
+                type="date"
+                name="created_to"
+                defaultValue={createdTo}
+                className="rounded-md border border-neutral-300 px-2 py-1.5 text-sm"
+              />
+            </label>
+          </div>
+        </details>
       </form>
 
       {fetchFailed ? (

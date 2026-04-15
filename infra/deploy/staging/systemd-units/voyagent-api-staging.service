@@ -1,0 +1,31 @@
+[Unit]
+Description=Voyagent API (staging)
+Documentation=https://github.com/voyagent/gbs-agentic-travel/blob/main/docs/STAGING.md
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=voyagent
+Group=voyagent
+WorkingDirectory=/opt/voyagent-staging/repo/services/api
+EnvironmentFile=/opt/voyagent-staging/.env.staging
+# Staging API listens on 8020 (prod uses 8010).
+Environment=PORT=8020
+Environment=VOYAGENT_ENV=staging
+ExecStart=/usr/bin/env uv run uvicorn voyagent_api.main:app --host 127.0.0.1 --port 8020
+Restart=on-failure
+RestartSec=5s
+KillSignal=SIGTERM
+TimeoutStopSec=30s
+StandardOutput=journal
+StandardError=journal
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/voyagent-staging/logs /opt/voyagent-staging/repo
+
+[Install]
+WantedBy=multi-user.target

@@ -69,12 +69,12 @@ _RESOLVED_STATUSES = frozenset(
 class ApprovalItem(BaseModel):
     """Shape of one approval row on the wire.
 
-    ``payload`` mirrors the tool-call args for the UI. The current
-    ``pending_approvals`` schema does not carry the raw payload column
-    yet, so this field is always ``{}`` — kept in the response so the
-    wire shape is stable once a later migration adds a payload column.
-    ``resolved_by_user_id`` is similarly always ``null`` today (there
-    is no column to persist it) — populated once the column lands.
+    ``payload`` mirrors the tool-call args for the UI — populated from
+    the ``pending_approvals.payload`` column (migration 0011). The
+    agent runtime does not yet write to that column, so newly-created
+    approvals surface as ``{}`` until that side is wired up.
+    ``resolved_by_user_id`` is set by :func:`resolve_approval_endpoint`
+    to the JWT principal that granted / rejected the row.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -132,6 +132,12 @@ def _row_to_item(row: PendingApprovalRow) -> ApprovalItem:
         if isinstance(row.status, ApprovalStatusEnum)
         else str(row.status)
     )
+    payload_value = row.payload if isinstance(row.payload, dict) else {}
+    resolved_by = (
+        str(row.resolved_by_user_id)
+        if row.resolved_by_user_id is not None
+        else None
+    )
     return ApprovalItem(
         id=row.id,
         session_id=str(row.session_id),
@@ -140,9 +146,9 @@ def _row_to_item(row: PendingApprovalRow) -> ApprovalItem:
         requested_at=row.requested_at,
         expires_at=row.expires_at,
         status=status_value,
-        payload={},
+        payload=payload_value,
         resolved_at=row.resolved_at,
-        resolved_by_user_id=None,
+        resolved_by_user_id=resolved_by,
     )
 
 
@@ -339,6 +345,10 @@ async def resolve_approval_endpoint(
 
     row.granted = body.granted
     row.resolved_at = now
+    try:
+        row.resolved_by_user_id = uuid.UUID(principal.user_id)
+    except ValueError:
+        row.resolved_by_user_id = None
     row.status = (
         ApprovalStatusEnum.GRANTED
         if body.granted

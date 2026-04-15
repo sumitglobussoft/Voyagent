@@ -9,6 +9,8 @@ import { redirect } from "next/navigation";
 import { apiGet, type InviteListResponse } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
 
+import { LocaleSwitcher } from "@/components/LocaleSwitcher";
+
 import { InviteForm } from "./InviteForm";
 import { revokeInviteAction } from "./actions";
 
@@ -135,6 +137,9 @@ export default async function SettingsPage({
         <p style={{ marginTop: 12, fontSize: 12, color: "#888" }}>
           TODO: rename-agency endpoint.
         </p>
+        <div style={{ marginTop: 16 }}>
+          <LocaleSwitcher />
+        </div>
       </section>
 
       {/* --- Members --- */}

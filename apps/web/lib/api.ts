@@ -97,6 +97,12 @@ export async function apiPatch<T = unknown>(
   return request<T>("PATCH", path, body);
 }
 
+export async function apiDelete<T = unknown>(
+  path: string,
+): Promise<ApiResult<T>> {
+  return request<T>("DELETE", path);
+}
+
 /**
  * Shape we hope to get back from ``GET /api/chat/sessions`` once that
  * list endpoint exists. The sidebar consumes this; ``title`` is

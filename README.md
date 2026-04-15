@@ -179,3 +179,8 @@ The full shipped history, known-bug punch-list, open product decisions, and the 
 ## License
 
 See [LICENSE](./LICENSE).
+
+## Docs added in wave 2
+
+- [`docs/GETTING_STARTED.md`](./docs/GETTING_STARTED.md) — agency onboarding walkthrough
+- [`docs/DRIVERS.md`](./docs/DRIVERS.md) — per-driver setup index (Amadeus, TBO, Tally, BSP India, VFS)

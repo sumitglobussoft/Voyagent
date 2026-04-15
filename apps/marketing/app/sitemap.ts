@@ -16,6 +16,7 @@ const STATIC_PATHS = [
   "/domains/ticketing-visa",
   "/domains/hotels-holidays",
   "/domains/accounting",
+  "/docs/api",
 ];
 
 export default function sitemap(): MetadataRoute.Sitemap {

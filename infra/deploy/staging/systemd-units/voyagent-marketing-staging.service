@@ -1,0 +1,31 @@
+[Unit]
+Description=Voyagent Marketing site (staging)
+Documentation=https://github.com/voyagent/gbs-agentic-travel/blob/main/docs/STAGING.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=voyagent
+Group=voyagent
+WorkingDirectory=/opt/voyagent-staging/repo/apps/marketing
+EnvironmentFile=/opt/voyagent-staging/.env.staging
+# Staging marketing listens on 3022 (prod uses 3012).
+Environment=PORT=3022
+Environment=NODE_ENV=production
+Environment=VOYAGENT_ENV=staging
+ExecStart=/usr/bin/env pnpm start
+Restart=on-failure
+RestartSec=5s
+KillSignal=SIGTERM
+TimeoutStopSec=30s
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/voyagent-staging/logs /opt/voyagent-staging/repo
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,120 @@
+name: Mobile Release
+
+# Mobile (Expo + EAS) release pipeline.
+#
+# Triggers:
+#   - workflow_dispatch  -> manual; user picks platform / profile / channel.
+#   - release published  -> production build + production OTA update.
+#
+# Why manual-first: EAS builds are slow (10-40 min) and consume Expo
+# build credits. We do not run them on every push. OTA updates are
+# cheaper but still go through EAS, so they are also gated.
+#
+# Required secret:
+#   EXPO_TOKEN — generate at https://expo.dev/accounts/<you>/settings/access-tokens
+#                and add it to the repo Actions secrets.
+#
+# Prerequisite (one-time, by a human):
+#   The Expo project ID must exist in apps/mobile/app.json under
+#   `expo.extra.eas.projectId`. Run `eas init` in apps/mobile/ locally
+#   to create it and commit the result.
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: "Target platform"
+        type: choice
+        options: [ios, android, all]
+        default: all
+      profile:
+        description: "EAS build profile"
+        type: choice
+        options: [development, preview, production]
+        default: production
+      channel:
+        description: "EAS update channel"
+        type: choice
+        options: [staging, production]
+        default: production
+  release:
+    types: [published]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  eas-build:
+    name: EAS build (${{ github.event_name == 'release' && 'all/production' || format('{0}/{1}', inputs.platform, inputs.profile) }})
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Setup pnpm 10
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: pnpm install
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Verify EXPO_TOKEN is set
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "::error::EXPO_TOKEN is not set. Add it to the repo Actions secrets."
+            exit 1
+          fi
+
+      - name: EAS build
+        working-directory: apps/mobile
+        run: |
+          PLATFORM="${{ inputs.platform || 'all' }}"
+          PROFILE="${{ inputs.profile || 'production' }}"
+          pnpm dlx eas-cli@latest build \
+            --platform "$PLATFORM" \
+            --profile "$PROFILE" \
+            --non-interactive \
+            --no-wait
+
+  eas-update:
+    name: EAS OTA update
+    needs: eas-build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Setup pnpm 10
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: pnpm install
+        run: pnpm install --no-frozen-lockfile
+
+      - name: EAS update
+        working-directory: apps/mobile
+        run: |
+          CHANNEL="${{ inputs.channel || 'production' }}"
+          pnpm dlx eas-cli@latest update \
+            --branch "$CHANNEL" \
+            --message "$GITHUB_SHA" \
+            --non-interactive

@@ -50,4 +50,33 @@ describe("Markdown", () => {
     const { container } = render(<Markdown text={md} />);
     expect(container.querySelector("script")).toBeNull();
   });
+
+  it("applies highlight.js classes to a python code block", () => {
+    const md = "```python\ndef greet(name):\n    return f'hi {name}'\n```";
+    const { container } = render(<Markdown text={md} />);
+    const code = container.querySelector("pre code");
+    expect(code).not.toBeNull();
+    // rehype-highlight adds `hljs` + `language-python` on the <code>.
+    expect(code?.className).toContain("language-python");
+    expect(code?.className).toContain("hljs");
+  });
+
+  it("renders an unknown language fence as plain text without crashing", () => {
+    const md = "```wingdings\nhello world\n```";
+    const { container } = render(<Markdown text={md} />);
+    const code = container.querySelector("pre code");
+    expect(code).not.toBeNull();
+    // The text still renders — ignoreMissing keeps the pipeline alive.
+    expect(code?.textContent).toContain("hello world");
+  });
+
+  it("renders inline text normally alongside highlighted code", () => {
+    const md =
+      "Here is some code:\n\n```js\nconst x = 1;\n```\n\nand a sentence.";
+    const { container } = render(<Markdown text={md} />);
+    // Paragraphs are still present.
+    expect(container.querySelectorAll("p").length).toBeGreaterThanOrEqual(2);
+    const code = container.querySelector("pre code");
+    expect(code?.className).toContain("language-js");
+  });
 });

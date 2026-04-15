@@ -164,6 +164,39 @@ command on mount (throttled once per 24 h). Before shipping:
 - Code-signing certificates must be provisioned out of band.
 - Updater manifest endpoint + signer key pair are human-owned steps.
 
+## Installers
+
+The `.github/workflows/desktop-release.yml` workflow produces installable
+binaries for all three desktop platforms on every GitHub Release and on
+every `workflow_dispatch` invocation. It also runs a dry-run matrix on
+every PR that touches `apps/desktop/**`, so CI catches Tauri build
+breakage before merge.
+
+Artifacts produced per platform:
+
+- **macOS** (`macos-14`, universal arm64 + x64): `.app.tar.gz` and `.dmg`
+- **Linux** (`ubuntu-22.04`): `.AppImage` and `.deb`
+- **Windows** (`windows-2022`): `.msi` (WiX) and `.exe` (NSIS)
+
+Binaries are **unsigned in v0**, so users will see security warnings
+on first launch:
+
+- macOS shows "app is from an unidentified developer" — right-click >
+  Open to bypass once.
+- Windows SmartScreen shows "unknown publisher" — click "More info" >
+  "Run anyway".
+- Linux AppImage / `.deb` do not require signing.
+
+To enable production signing, set the secrets listed in
+`.github/workflows/README.md` and uncomment the `env:` block at the top
+of the `desktop-release` job in `.github/workflows/desktop-release.yml`.
+
+To kick a manual build without cutting a release:
+
+```bash
+gh workflow run desktop-release.yml
+```
+
 ## Scripts
 
 - `pnpm --filter @voyagent/desktop dev` — Vite only, no Tauri window

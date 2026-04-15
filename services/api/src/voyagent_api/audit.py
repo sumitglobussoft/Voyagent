@@ -494,7 +494,208 @@ async def list_audit_events(
     )
 
 
+# --------------------------------------------------------------------------- #
+# CSV export                                                                  #
+# --------------------------------------------------------------------------- #
+
+#: Maximum number of rows a single ``GET /audit/export.csv`` call will
+#: serialize. A 100k-row export is already ~30 MB raw; we refuse to
+#: stream more than that synchronously (callers with bigger ranges
+#: should narrow their filters or use a future async job). Exposed as
+#: a module-level constant so tests can reference or monkeypatch it.
+AUDIT_CSV_EXPORT_MAX_ROWS: int = 100_000
+
+_CSV_COLUMNS = (
+    "created_at",
+    "kind",
+    "actor_kind",
+    "actor_id",
+    "actor_email",
+    "status",
+    "summary",
+    "payload_json",
+)
+
+
+def _build_audit_query_for_export(
+    *,
+    tenant_uuid: uuid.UUID,
+    actor_id: str | None,
+    kind: list[str] | None,
+    date_from: date | None,
+    date_to: date | None,
+):
+    """Return a SELECT for the CSV export, matching ``list_audit_events``.
+
+    Deliberately shares no code with the JSON list function because
+    pagination semantics differ: the CSV path applies the row-cap
+    guard instead of limit/offset, and the caller streams rows rather
+    than materialising them all upfront.
+    """
+    import json as _json
+
+    stmt = select(AuditEventRow).where(AuditEventRow.tenant_id == tenant_uuid)
+
+    if actor_id is not None:
+        try:
+            actor_uuid = uuid.UUID(actor_id)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="invalid_actor_id",
+            ) from exc
+        stmt = stmt.where(AuditEventRow.actor_id == actor_uuid)
+
+    kinds = _parse_kinds(kind)
+    if kinds:
+        stmt = stmt.where(AuditEventRow.tool.in_(kinds))
+
+    if date_from is not None:
+        start_dt = datetime.combine(date_from, dtime.min, tzinfo=timezone.utc)
+        stmt = stmt.where(AuditEventRow.started_at >= start_dt)
+    if date_to is not None:
+        end_dt = datetime.combine(date_to, dtime.max, tzinfo=timezone.utc)
+        stmt = stmt.where(AuditEventRow.started_at <= end_dt)
+
+    # Silence unused-import lint; ``_json`` is documentation-only here
+    # so future authors know the column is JSON-serialized below.
+    _ = _json
+    return stmt.order_by(AuditEventRow.started_at.desc())
+
+
+@router.get("/export.csv")
+async def export_audit_csv(
+    actor_id: str | None = Query(None),
+    kind: list[str] | None = Query(None),
+    date_from: date | None = Query(None, alias="from"),
+    date_to: date | None = Query(None, alias="to"),
+    principal: AuthenticatedPrincipal = Depends(require_agency_admin),
+    db: AsyncSession = Depends(db_session),
+):
+    """Stream an audit-log CSV for the caller's tenant.
+
+    Same filters as :func:`list_audit_events` (actor, kind, from, to) —
+    no pagination. Admin-only (``require_agency_admin``). Refuses to
+    export more than :data:`AUDIT_CSV_EXPORT_MAX_ROWS` rows; narrow the
+    filter range for bigger exports. Columns:
+
+    * ``created_at, kind, actor_kind, actor_id, actor_email, status,
+      summary, payload_json``
+
+    ``payload_json`` is the same ``payload`` dict the JSON endpoint
+    returns, serialized with ``json.dumps(default=str)`` so Decimals
+    and datetimes survive the round-trip. Uses
+    :func:`csv.writer` — never hand-roll quoting.
+    """
+    import csv
+    import io
+    import json as _json
+
+    from fastapi.responses import StreamingResponse
+
+    tenant_uuid = _tenant_uuid_for_read(principal)
+
+    # Row-count guard first so we fail fast with a clean 400 before
+    # we start streaming bytes.
+    count_stmt = (
+        select(func.count())
+        .select_from(AuditEventRow)
+        .where(AuditEventRow.tenant_id == tenant_uuid)
+    )
+    if actor_id is not None:
+        try:
+            actor_uuid = uuid.UUID(actor_id)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="invalid_actor_id",
+            ) from exc
+        count_stmt = count_stmt.where(AuditEventRow.actor_id == actor_uuid)
+    kinds = _parse_kinds(kind)
+    if kinds:
+        count_stmt = count_stmt.where(AuditEventRow.tool.in_(kinds))
+    if date_from is not None:
+        start_dt = datetime.combine(date_from, dtime.min, tzinfo=timezone.utc)
+        count_stmt = count_stmt.where(AuditEventRow.started_at >= start_dt)
+    if date_to is not None:
+        end_dt = datetime.combine(date_to, dtime.max, tzinfo=timezone.utc)
+        count_stmt = count_stmt.where(AuditEventRow.started_at <= end_dt)
+
+    total = int((await db.execute(count_stmt)).scalar_one() or 0)
+    if total > AUDIT_CSV_EXPORT_MAX_ROWS:
+        raise HTTPException(status_code=400, detail="export_too_large")
+
+    stmt = _build_audit_query_for_export(
+        tenant_uuid=tenant_uuid,
+        actor_id=actor_id,
+        kind=kind,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+
+    # Hydrate actor_email in one batched lookup (same shape as the
+    # JSON list endpoint).
+    actor_ids = {row.actor_id for row in rows if row.actor_id is not None}
+    email_by_id: dict[uuid.UUID, str] = {}
+    if actor_ids:
+        user_rows = (
+            await db.execute(
+                select(User.id, User.email).where(User.id.in_(actor_ids))
+            )
+        ).all()
+        email_by_id = {uid: email for uid, email in user_rows}
+
+    def _iter_csv():
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(_CSV_COLUMNS)
+        yield buf.getvalue()
+        buf.seek(0)
+        buf.truncate()
+
+        for row in rows:
+            resp = _row_to_response(
+                row,
+                actor_email=(
+                    email_by_id.get(row.actor_id)
+                    if row.actor_id is not None
+                    else None
+                ),
+            )
+            writer.writerow(
+                [
+                    resp.created_at.isoformat()
+                    if resp.created_at is not None
+                    else "",
+                    resp.kind,
+                    resp.actor_kind,
+                    resp.actor_id or "",
+                    resp.actor_email or "",
+                    resp.status,
+                    resp.summary,
+                    _json.dumps(resp.payload, default=str),
+                ]
+            )
+            yield buf.getvalue()
+            buf.seek(0)
+            buf.truncate()
+
+    tenant_short = str(tenant_uuid)[:8]
+    today = datetime.now(timezone.utc).date().isoformat()
+    filename = f"voyagent-audit-{tenant_short}-{today}.csv"
+
+    return StreamingResponse(
+        _iter_csv(),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
+
+
 __all__ = [
+    "AUDIT_CSV_EXPORT_MAX_ROWS",
     "get_api_audit_sink",
     "record_auth_failure",
     "router",

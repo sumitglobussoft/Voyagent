@@ -391,11 +391,151 @@ TENANT_REGISTRY_KEY = "tenant_registry"
 """ToolContext.extensions key for the :class:`TenantRegistry`."""
 
 
+# --------------------------------------------------------------------------- #
+# Tenant runtime settings (model, prompt suffix, limits)                      #
+# --------------------------------------------------------------------------- #
+
+
+_SUPPORTED_MODELS: frozenset[str] = frozenset(
+    {
+        "claude-sonnet-4-5",
+        "claude-opus-4-6",
+        "claude-haiku-4-5-20251001",
+    }
+)
+
+
+class TenantSettings:
+    """Plain container for per-tenant runtime overrides.
+
+    Intentionally not a Pydantic model — it's constructed from either a
+    SQL row or a defaults dict and passed around the orchestrator. The
+    API layer has its own Pydantic shapes.
+    """
+
+    def __init__(
+        self,
+        *,
+        tenant_id: str,
+        model: str | None = None,
+        system_prompt_suffix: str | None = None,
+        rate_limit_per_minute: int = 60,
+        rate_limit_per_hour: int = 1000,
+        daily_token_budget: int | None = None,
+        locale: str = "en",
+        timezone: str = "UTC",
+        default_currency: str = "INR",
+    ) -> None:
+        self.tenant_id = tenant_id
+        # Guard against corrupted rows: unknown model falls back to env.
+        if model is not None and model not in _SUPPORTED_MODELS:
+            logger.warning(
+                "tenant_settings: tenant=%s has unsupported model=%s — "
+                "ignoring override",
+                tenant_id,
+                model,
+            )
+            model = None
+        self.model = model
+        self.system_prompt_suffix = system_prompt_suffix
+        self.rate_limit_per_minute = int(rate_limit_per_minute)
+        self.rate_limit_per_hour = int(rate_limit_per_hour)
+        self.daily_token_budget = daily_token_budget
+        self.locale = locale
+        self.timezone = timezone
+        self.default_currency = default_currency
+
+    @classmethod
+    def defaults(cls, tenant_id: str) -> "TenantSettings":
+        return cls(tenant_id=tenant_id)
+
+
+class TenantSettingsResolver:
+    """Loads :class:`TenantSettings` from storage, caches in-process.
+
+    On miss — no row — returns :meth:`TenantSettings.defaults`. The
+    cache is intentionally small and best-effort; callers that mutate
+    settings must call :meth:`invalidate` (or the API layer will).
+    """
+
+    def __init__(self, *, engine: Any | None = None) -> None:
+        self._engine = engine
+        self._cache: dict[str, TenantSettings] = {}
+        self._lock = asyncio.Lock()
+
+    async def get(self, tenant_id: str) -> TenantSettings:
+        async with self._lock:
+            hit = self._cache.get(tenant_id)
+            if hit is not None:
+                return hit
+        loaded = await self._load(tenant_id)
+        async with self._lock:
+            self._cache[tenant_id] = loaded
+        return loaded
+
+    def invalidate(self, tenant_id: str | None = None) -> None:
+        if tenant_id is None:
+            self._cache.clear()
+        else:
+            self._cache.pop(tenant_id, None)
+
+    def prime(self, settings: TenantSettings) -> None:
+        """Test / API helper — insert a row into the cache directly."""
+        self._cache[settings.tenant_id] = settings
+
+    async def _load(self, tenant_id: str) -> TenantSettings:
+        if self._engine is None:
+            return TenantSettings.defaults(tenant_id)
+        try:
+            import uuid as _uuid
+
+            from sqlalchemy import select
+            from sqlalchemy.ext.asyncio import async_sessionmaker
+
+            from schemas.storage import TenantSettingsRow  # type: ignore[import-not-found]
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("tenant_settings_resolver: storage unavailable: %s", exc)
+            return TenantSettings.defaults(tenant_id)
+        try:
+            tid_uuid = _uuid.UUID(tenant_id)
+        except ValueError:
+            return TenantSettings.defaults(tenant_id)
+        sm = async_sessionmaker(self._engine, expire_on_commit=False)
+        async with sm() as db:
+            row = (
+                await db.execute(
+                    select(TenantSettingsRow).where(
+                        TenantSettingsRow.tenant_id == tid_uuid
+                    )
+                )
+            ).scalar_one_or_none()
+        if row is None:
+            return TenantSettings.defaults(tenant_id)
+        return TenantSettings(
+            tenant_id=tenant_id,
+            model=row.model,
+            system_prompt_suffix=row.system_prompt_suffix,
+            rate_limit_per_minute=row.rate_limit_per_minute,
+            rate_limit_per_hour=row.rate_limit_per_hour,
+            daily_token_budget=row.daily_token_budget,
+            locale=row.locale,
+            timezone=row.timezone,
+            default_currency=row.default_currency,
+        )
+
+
+TENANT_SETTINGS_KEY = "tenant_settings"
+"""ToolContext.extensions key for the active :class:`TenantSettings`."""
+
+
 __all__ = [
     "CredentialResolver",
     "EnvCredentialResolver",
     "StorageCredentialResolver",
     "TENANT_REGISTRY_KEY",
+    "TENANT_SETTINGS_KEY",
     "TenantRegistry",
+    "TenantSettings",
+    "TenantSettingsResolver",
     "default_credential_resolver",
 ]

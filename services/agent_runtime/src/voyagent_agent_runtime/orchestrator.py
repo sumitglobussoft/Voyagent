@@ -16,12 +16,25 @@ from typing import Any
 
 from ._agent_loop import run_agent_turn
 from .anthropic_client import AnthropicClient
+from .cost_tracker import (
+    CostTracker,
+    DailyBudgetExceededError,
+    build_turn_cost,
+    enforce_daily_budget,
+)
 from .domain_agents.base import DomainAgent, DomainAgentRequest
 from .events import AgentEvent, AgentEventKind
 from .passenger_resolver import PASSENGER_RESOLVER_KEY
 from .prompts import ORCHESTRATOR_SYSTEM_PROMPT
+from .rate_limiter import RateLimitExceededError, RateLimiter
 from .session import Message, Session
-from .tenant_registry import TENANT_REGISTRY_KEY, TenantRegistry
+from .tenant_registry import (
+    TENANT_REGISTRY_KEY,
+    TENANT_SETTINGS_KEY,
+    TenantRegistry,
+    TenantSettingsResolver,
+)
+from .tool_cache import ToolResultCache
 from .tools import (
     ORCHESTRATOR_TOOL_NAMES,
     AuditSink,
@@ -65,6 +78,10 @@ class Orchestrator:
         tenant_registry: TenantRegistry | None = None,
         driver_registry: Any | None = None,
         passenger_resolver: Any | None = None,
+        tenant_settings_resolver: TenantSettingsResolver | None = None,
+        rate_limiter: RateLimiter | None = None,
+        cost_tracker: CostTracker | None = None,
+        tool_cache: ToolResultCache | None = None,
     ) -> None:
         if tenant_registry is None and driver_registry is None:
             raise ValueError(
@@ -78,6 +95,10 @@ class Orchestrator:
         self._tenant_registry = tenant_registry
         self._drivers = driver_registry
         self._passenger_resolver = passenger_resolver
+        self._tenant_settings = tenant_settings_resolver
+        self._rate_limiter = rate_limiter
+        self._cost_tracker = cost_tracker
+        self._tool_cache = tool_cache
 
     async def run_turn(
         self,
@@ -93,7 +114,71 @@ class Orchestrator:
         approval ids emitted on the earlier APPROVAL_REQUEST events.
         """
         turn_id = _new_turn_id()
+
+        # --- Per-tenant runtime gates ---------------------------------- #
+        tenant_settings = None
+        if self._tenant_settings is not None:
+            try:
+                tenant_settings = await self._tenant_settings.get(
+                    str(session.tenant_id)
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("tenant settings lookup failed")
+                tenant_settings = None
+
+        if self._rate_limiter is not None:
+            rpm = tenant_settings.rate_limit_per_minute if tenant_settings else 60
+            rph = tenant_settings.rate_limit_per_hour if tenant_settings else 1000
+            try:
+                await self._rate_limiter.check(
+                    str(session.tenant_id), rpm, rph
+                )
+            except RateLimitExceededError as exc:
+                yield AgentEvent(
+                    kind=AgentEventKind.ERROR,
+                    session_id=session.id,
+                    turn_id=turn_id,
+                    error_message=f"rate_limited: {exc.scope}",
+                )
+                yield AgentEvent(
+                    kind=AgentEventKind.FINAL,
+                    session_id=session.id,
+                    turn_id=turn_id,
+                )
+                return
+
+        if (
+            self._cost_tracker is not None
+            and tenant_settings is not None
+            and tenant_settings.daily_token_budget is not None
+        ):
+            try:
+                await enforce_daily_budget(
+                    self._cost_tracker,
+                    str(session.tenant_id),
+                    tenant_settings.daily_token_budget,
+                )
+            except DailyBudgetExceededError as exc:
+                yield AgentEvent(
+                    kind=AgentEventKind.ERROR,
+                    session_id=session.id,
+                    turn_id=turn_id,
+                    error_message=(
+                        f"daily_budget_exceeded: limit={exc.limit} used={exc.used}"
+                    ),
+                )
+                yield AgentEvent(
+                    kind=AgentEventKind.FINAL,
+                    session_id=session.id,
+                    turn_id=turn_id,
+                )
+                return
+
         extensions: dict[str, Any] = {}
+        if tenant_settings is not None:
+            extensions[TENANT_SETTINGS_KEY] = tenant_settings
+        if self._tool_cache is not None:
+            extensions["tool_cache"] = self._tool_cache
         if self._tenant_registry is not None:
             extensions[TENANT_REGISTRY_KEY] = self._tenant_registry
         if self._drivers is not None:
@@ -218,6 +303,30 @@ class Orchestrator:
                     turn_id=turn_id,
                     error_message=f"{type(exc).__name__}: {exc}",
                 )
+
+        # Record cost for the turn from the Anthropic client's final
+        # message, if the SDK surfaced usage on it. We read off the
+        # client surface rather than wiring a callback through the
+        # agent-loop so this hook stays local to the orchestrator.
+        if self._cost_tracker is not None:
+            try:
+                final_msg = getattr(self._client, "_last_final_message", None)
+                usage = getattr(final_msg, "usage", None) if final_msg else None
+                input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
+                output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+                model = getattr(self._client, "model", "unknown")
+                if input_tokens or output_tokens:
+                    cost = build_turn_cost(
+                        tenant_id=str(session.tenant_id),
+                        session_id=str(session.id),
+                        turn_id=turn_id,
+                        model=str(model),
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                    )
+                    await self._cost_tracker.record(cost)
+            except Exception:  # noqa: BLE001
+                logger.exception("cost_tracker.record failed")
 
         yield AgentEvent(
             kind=AgentEventKind.FINAL,

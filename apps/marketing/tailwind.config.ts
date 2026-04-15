@@ -14,6 +14,7 @@ import preset from "@voyagent/config/tailwind/preset";
  * future dark-mode flip only requires toggling the variable block.
  */
 const config: Config = {
+  darkMode: "class",
   presets: [preset as Partial<Config>],
   content: ["./src/**/*.{ts,tsx,md,mdx}", "./app/**/*.{ts,tsx,md,mdx}"],
   theme: {

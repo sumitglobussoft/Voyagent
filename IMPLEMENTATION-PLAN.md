@@ -234,3 +234,10 @@ Tiered by whether the work depends on external credentials or third-party approv
 - **Size.** L.
 - **Dependencies.** A real long-running workflow that exceeds what SSE + resumable sessions can handle; see D11 in [docs/DECISIONS.md](./docs/DECISIONS.md).
 - **Done-when.** One nominated workflow (likely visa submission or ticket issuance on slow GDS paths) is re-expressed as a durable workflow with a decision ADR attached.
+
+## Docs added in wave 2
+
+- [`docs/GETTING_STARTED.md`](./docs/GETTING_STARTED.md) — first-day agency onboarding walkthrough
+- [`docs/DRIVERS.md`](./docs/DRIVERS.md) — per-driver setup index, with one page per driver under `docs/drivers/`
+- [`tests/integration/README.md`](./tests/integration/README.md) — opt-in real-Postgres integration fixture + round-trip test
+- [`tests/load/README.md`](./tests/load/README.md) and [`tests/load/scenarios.md`](./tests/load/scenarios.md) — Locust load-test scenarios and baselines

@@ -44,12 +44,18 @@ from .passenger_resolver import (
     build_passenger_resolver,
 )
 from .session import InMemorySessionStore, SessionStore
+from .anthropic_client import DEFAULT_MODEL
+from .cost_tracker import InMemoryCostTracker, StorageCostTracker
+from .rate_limiter import InMemoryRateLimiter
 from .tenant_registry import (
     EnvCredentialResolver,
     StorageCredentialResolver,
     TenantRegistry,
+    TenantSettings,
+    TenantSettingsResolver,
     _maybe_import_storage,
 )
+from .tool_cache import ToolResultCache
 from .tools import AuditSink, InMemoryAuditSink
 
 if TYPE_CHECKING:
@@ -133,6 +139,42 @@ class DefaultRuntime:
     driver_registry: DriverRegistry | None = field(default=None)
     engine: "AsyncEngine | None" = field(default=None)
     offer_cache: OfferCache | None = field(default=None)
+    tenant_settings_resolver: TenantSettingsResolver | None = field(default=None)
+    rate_limiter: InMemoryRateLimiter | None = field(default=None)
+    cost_tracker: InMemoryCostTracker | StorageCostTracker | None = field(default=None)
+    tool_cache: ToolResultCache | None = field(default=None)
+
+    async def resolve_tenant_model(self, tenant_id: str) -> str:
+        """Return the Anthropic model id for ``tenant_id``.
+
+        Falls back to the process-level ``VOYAGENT_AGENT_MODEL`` env (or
+        the Anthropic client default) when:
+          * there is no :class:`TenantSettingsResolver` wired, or
+          * the tenant has no row / an unsupported ``model`` value.
+        """
+        env_default = os.environ.get("VOYAGENT_AGENT_MODEL") or DEFAULT_MODEL
+        if self.tenant_settings_resolver is None:
+            return env_default
+        settings = await self.tenant_settings_resolver.get(tenant_id)
+        return settings.model or env_default
+
+    async def resolve_tenant_prompt_suffix(self, tenant_id: str) -> str | None:
+        """Return the tenant's ``system_prompt_suffix`` override or ``None``."""
+        if self.tenant_settings_resolver is None:
+            return None
+        settings = await self.tenant_settings_resolver.get(tenant_id)
+        return settings.system_prompt_suffix
+
+    async def resolve_tenant_settings(self, tenant_id: str) -> TenantSettings:
+        """Return the full :class:`TenantSettings` for ``tenant_id``.
+
+        Callers that need multiple fields — rate limits, daily budget,
+        locale — should call this once rather than making repeated
+        per-field lookups.
+        """
+        if self.tenant_settings_resolver is None:
+            return TenantSettings.defaults(tenant_id)
+        return await self.tenant_settings_resolver.get(tenant_id)
 
     def __post_init__(self) -> None:
         # Track whether anyone reached for ``driver_registry`` so we can log
@@ -343,6 +385,18 @@ def build_default_runtime(
         "redis" if resolved_redis_url else "in-memory",
     )
 
+    # Per-tenant settings resolver + in-memory rate limiter + tool cache.
+    # Cost tracker picks storage-backed when an engine is available so
+    # daily-budget enforcement survives a process restart.
+    tenant_settings_resolver = TenantSettingsResolver(engine=engine)
+    rate_limiter = InMemoryRateLimiter()
+    tool_cache = ToolResultCache()
+    cost_tracker: InMemoryCostTracker | StorageCostTracker
+    if engine is not None:
+        cost_tracker = StorageCostTracker(engine)
+    else:
+        cost_tracker = InMemoryCostTracker()
+
     return DefaultRuntime(
         anthropic_client=anthropic_client,
         audit_sink=audit_sink,
@@ -354,6 +408,10 @@ def build_default_runtime(
         driver_registry=driver_registry,
         engine=engine,
         offer_cache=offer_cache,
+        tenant_settings_resolver=tenant_settings_resolver,
+        rate_limiter=rate_limiter,
+        cost_tracker=cost_tracker,
+        tool_cache=tool_cache,
     )
 
 

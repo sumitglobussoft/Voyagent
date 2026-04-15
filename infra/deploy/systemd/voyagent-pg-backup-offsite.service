@@ -1,0 +1,26 @@
+[Unit]
+Description=Voyagent Postgres nightly offsite backup (S3/B2/R2 via rclone)
+Documentation=https://github.com/voyagent/gbs-agentic-travel/blob/main/docs/BACKUPS.md
+Wants=network-online.target voyagent-pg-backup.service
+After=network-online.target voyagent-pg-backup.service
+
+[Service]
+Type=oneshot
+# Offsite env file holds rclone remote + bucket. Opt-in: if absent the script
+# exits 0 without doing anything.
+ExecStart=/opt/voyagent/repo/infra/deploy/scripts/pg-backup-offsite.sh
+User=root
+Group=root
+UMask=0027
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+# rclone config lives in /root/.config/rclone or /etc/rclone; both reachable
+# with ProtectSystem=strict since we don't need to write them here.
+ReadWritePaths=/opt/voyagent/backups
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -15,6 +15,7 @@ import type { ReactElement } from "react";
 import { LogOut } from "@voyagent/icons";
 
 import type { PublicUser } from "@/lib/auth";
+import { ThemeToggle } from "./ThemeToggle";
 
 function initials(user: PublicUser): string {
   const source = (user.full_name ?? user.email ?? "").trim();
@@ -121,28 +122,32 @@ export function UserCard({ user }: { user: PublicUser }): ReactElement {
         >
           {user.role}
         </span>
-        {/* Form action keeps the /app basePath explicitly — HTML form
-            actions are not auto-prefixed. */}
-        <form action="/app/sign-out" method="post" style={{ margin: 0 }}>
-          <button
-            type="submit"
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              background: "transparent",
-              border: "1px solid #d4d4d8",
-              borderRadius: 6,
-              padding: "4px 10px",
-              cursor: "pointer",
-              fontSize: 12,
-              color: "#3f3f46",
-            }}
-          >
-            <LogOut size={12} />
-            Sign out
-          </button>
-        </form>
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <ThemeToggle />
+          {/* Form action keeps the /app basePath explicitly — HTML form
+              actions are not auto-prefixed. */}
+          <form action="/app/sign-out" method="post" style={{ margin: 0 }}>
+            <button
+              type="submit"
+              aria-label="Sign out"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                background: "transparent",
+                border: "1px solid #d4d4d8",
+                borderRadius: 6,
+                padding: "4px 10px",
+                cursor: "pointer",
+                fontSize: 12,
+                color: "#3f3f46",
+              }}
+            >
+              <LogOut size={12} />
+              Sign out
+            </button>
+          </form>
+        </div>
       </div>
     </div>
   );

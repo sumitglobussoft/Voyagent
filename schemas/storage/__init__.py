@@ -55,6 +55,8 @@ from .ledger import (
     build_journal_entry,
 )
 from .passenger import PassengerRow
+from .session_cost import SessionCostRow
+from .tenant_settings import TenantSettingsRow
 from .session import (
     ACTOR_KIND_SATYPE,
     APPROVAL_STATUS_SATYPE,
@@ -103,8 +105,10 @@ __all__ = [
     "PendingApprovalRow",
     "RefreshTokenRow",
     "SecurityError",
+    "SessionCostRow",
     "SessionRow",
     "Tenant",
+    "TenantSettingsRow",
     "TenantCredential",
     "TenantCredentialRepository",
     "Timestamps",

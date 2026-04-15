@@ -356,6 +356,91 @@ async def test_resolve_grant_happy_path(client: TestClient) -> None:
     body = r.json()
     assert body["status"] == "granted"
     assert body["resolved_at"] is not None
+    # ``resolved_by_user_id`` is populated from the JWT principal on
+    # resolve (wired up in this wave). The resolver is the signed-up
+    # admin so it matches ``signup['user']['id']``.
+    assert body["resolved_by_user_id"] == signup["user"]["id"]
+
+
+async def test_resolve_persists_resolved_by_user_id(
+    client: TestClient,
+) -> None:
+    """The stored row also carries resolved_by_user_id, not just the
+    wire response."""
+    signup = _sign_up(client, email="alice@a.com", agency="A")
+    tenant_id = signup["user"]["tenant_id"]
+    sid = await _insert_session(tenant_id)
+    await _insert_approval(approval_id="ap-rbuid", session_id=sid)
+
+    r = client.post(
+        "/approvals/ap-rbuid/resolve",
+        json={"granted": True},
+        headers={"Authorization": f"Bearer {signup['access_token']}"},
+    )
+    assert r.status_code == 200
+
+    sm = db_module.get_sessionmaker()
+    async with sm() as s:
+        row = (
+            await s.execute(
+                select(PendingApprovalRow).where(
+                    PendingApprovalRow.id == "ap-rbuid"
+                )
+            )
+        ).scalar_one()
+        assert row.resolved_by_user_id is not None
+        assert str(row.resolved_by_user_id) == signup["user"]["id"]
+        assert row.resolved_at is not None
+
+
+async def test_list_returns_payload_and_resolver_on_resolved_rows(
+    client: TestClient,
+) -> None:
+    """After a resolve, the list endpoint surfaces the populated
+    payload column plus resolved_by_user_id on the row."""
+    signup = _sign_up(client, email="alice@a.com", agency="A")
+    tenant_id = signup["user"]["tenant_id"]
+    sid = await _insert_session(tenant_id)
+
+    # Seed a row with a non-empty payload directly so we exercise the
+    # read path independently of runtime wiring.
+    sm = db_module.get_sessionmaker()
+    async with sm() as s:
+        now = datetime.now(timezone.utc)
+        s.add(
+            PendingApprovalRow(
+                id="ap-payload",
+                session_id=sid,
+                tool_name="issue_ticket",
+                summary="Issue PNR XYZ",
+                turn_id="turn-1",
+                requested_at=now,
+                expires_at=now + timedelta(minutes=15),
+                status=ApprovalStatusEnum.PENDING,
+                payload={"pnr": "XYZ", "amount": "1234.50"},
+            )
+        )
+        await s.commit()
+
+    r = client.post(
+        "/approvals/ap-payload/resolve",
+        json={"granted": True},
+        headers={"Authorization": f"Bearer {signup['access_token']}"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["payload"] == {"pnr": "XYZ", "amount": "1234.50"}
+    assert body["resolved_by_user_id"] == signup["user"]["id"]
+
+    # And the list endpoint returns the same values.
+    r_list = client.get(
+        "/approvals?status=all",
+        headers={"Authorization": f"Bearer {signup['access_token']}"},
+    )
+    items = r_list.json()["items"]
+    match = next(i for i in items if i["id"] == "ap-payload")
+    assert match["payload"] == {"pnr": "XYZ", "amount": "1234.50"}
+    assert match["resolved_by_user_id"] == signup["user"]["id"]
 
 
 async def test_resolve_reject_happy_path(client: TestClient) -> None:

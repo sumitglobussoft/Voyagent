@@ -153,10 +153,81 @@ which decodes the JWT `exp` and refreshes pre-emptively when within 30s.
 - Icon / splash PNGs not generated.
 - Not validated on a real device yet (no `eas build` run).
 
+## Passport OCR
+
+`lib/ocr.ts` and `components/PassportScanner.tsx` provide a passport
+scanner: agency staff snap a photo of a passenger's passport, the app
+extracts the MRZ (Machine Readable Zone) fields, and a review form
+pre-fills the passenger record.
+
+**v0 stubs the ML layer.** `extractPassport` returns a canned, valid
+ICAO 9303 specimen in `__DEV__` mode and `ocr_not_configured` in
+production. The `parseMrz` helper is real — it implements the ICAO
+9303 TD-3 spec, including check-digit verification on the document
+number, DOB, expiration, and composite field. It is covered by a
+vitest suite at `__tests__/ocr.test.ts`.
+
+To wire a real OCR provider, swap the body of `extractPassport` to
+call one of:
+
+- Google Cloud Vision (`DOCUMENT_TEXT_DETECTION`)
+- AWS Textract
+- `react-native-mlkit-text-recognition` (on-device, ejects managed workflow)
+- Azure Computer Vision Read API
+
+Whatever provider yields two strings for the two MRZ lines — hand them
+to `parseMrz` and the rest of the pipeline works unchanged.
+
+The scan screen is `app/scan.tsx`, reachable via
+`router.push("/scan")`. It's not in the tab bar yet; the expected
+entry point is from the reports or pair surfaces once a "scan new
+passenger" affordance is added.
+
+### Running the OCR tests
+
+```bash
+pnpm --filter @voyagent/mobile test
+```
+
+This runs vitest in Node (no React Native / Metro involved — the OCR
+helper is pure TypeScript). React Native component tests are not set up.
+
+## OTA updates (EAS)
+
+The mobile release pipeline is `.github/workflows/mobile-release.yml`.
+It runs EAS build + EAS update. Triggers:
+
+- `workflow_dispatch` — pick platform / profile / channel
+- `release: types: [published]` — production build + production OTA
+
+### Before the first run
+
+1. Log in and run `eas init` from `apps/mobile/`:
+   ```bash
+   pnpm dlx eas-cli@latest login
+   pnpm dlx eas-cli@latest init
+   ```
+2. Commit the updated `app.json` (the `expo.extra.eas.projectId` and
+   `updates.url` fields are placeholders right now).
+3. Add `EXPO_TOKEN` to the repo's GitHub Actions secrets. Generate one
+   at https://expo.dev/accounts/&lt;you&gt;/settings/access-tokens.
+4. Publish a GitHub Release, or run the workflow manually:
+   ```bash
+   gh workflow run mobile-release.yml \
+     -f platform=all -f profile=production -f channel=production
+   ```
+
+The `eas.json` profiles are:
+
+- **development** — internal dev client, no channel
+- **preview** — internal distribution on `staging` channel
+- **production** — auto-incrementing build number on `production` channel
+
 ## Scripts
 
 - `pnpm --filter @voyagent/mobile start` — Expo dev server
 - `pnpm --filter @voyagent/mobile android` — open Android emulator
 - `pnpm --filter @voyagent/mobile ios` — open iOS simulator
 - `pnpm --filter @voyagent/mobile lint` — `tsc --noEmit`
+- `pnpm --filter @voyagent/mobile test` — vitest (OCR helper)
 - `pnpm --filter @voyagent/mobile clean` — wipe `.expo/` and `dist/`

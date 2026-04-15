@@ -2,9 +2,126 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ----------------------------------------------------------------------
+ * Syntax highlighting for fenced code blocks in assistant markdown.
+ *
+ * `rehype-highlight` in packages/chat tags <code> elements with
+ * `hljs language-<lang>` classes. We ship the github light theme as the
+ * base and the github-dark theme under `html.dark` — Tailwind is set to
+ * `darkMode: "class"` so the theme switcher just toggles a class on
+ * <html>. Both themes are ~4KB each so the footprint is negligible
+ * compared to a full shiki-based pipeline.
+ *
+ * The imports must be at the top of the file per CSS ordering rules, so
+ * we use the bundler-resolved package subpath — Next.js / Turbopack /
+ * webpack all resolve `highlight.js/styles/*.css` to the installed
+ * highlight.js wheel.
+ * -------------------------------------------------------------------- */
+@import "highlight.js/styles/github.css";
+@import "highlight.js/styles/github-dark.css" (prefers-color-scheme: dark);
+
 /* Smooth scrolling for the chat transcript + other long lists. */
 html {
   scroll-behavior: smooth;
+}
+
+/* ----------------------------------------------------------------------
+ * Dark mode palette.
+ *
+ * Tailwind is configured with `darkMode: "class"` so every `dark:` variant
+ * kicks in when `<html class="dark">` is set by ThemeProvider. The CSS
+ * variables below drive the base body background + a few neutrals that
+ * the non-Tailwind inline-style components (UserCard, AppSidebar) read
+ * via `var(--voyagent-*)`.
+ * -------------------------------------------------------------------- */
+:root {
+  --voyagent-bg: #fafafa;
+  --voyagent-surface: #f4f4f5;
+  --voyagent-fg: #18181b;
+  --voyagent-muted: #71717a;
+  --voyagent-border: #e5e7eb;
+}
+html.dark {
+  --voyagent-bg: #09090b;
+  --voyagent-surface: #18181b;
+  --voyagent-fg: #fafafa;
+  --voyagent-muted: #a1a1aa;
+  --voyagent-border: #27272a;
+  color-scheme: dark;
+}
+html.dark body {
+  background: var(--voyagent-bg);
+  color: var(--voyagent-fg);
+}
+
+/* ----------------------------------------------------------------------
+ * Toast container + slide-in animation.
+ * -------------------------------------------------------------------- */
+.voyagent-toast-container {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 100;
+  pointer-events: none;
+  max-width: min(360px, calc(100vw - 32px));
+}
+.voyagent-toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--voyagent-border);
+  background: #ffffff;
+  color: #18181b;
+  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.2);
+  font-size: 13px;
+  line-height: 1.4;
+  animation: voyagent-toast-in 200ms ease-out;
+}
+html.dark .voyagent-toast {
+  background: #18181b;
+  color: #fafafa;
+  border-color: #27272a;
+}
+.voyagent-toast[data-kind="success"] {
+  border-left: 3px solid #16a34a;
+}
+.voyagent-toast[data-kind="error"] {
+  border-left: 3px solid #dc2626;
+}
+.voyagent-toast[data-kind="info"] {
+  border-left: 3px solid #2563eb;
+}
+.voyagent-toast-dismiss {
+  background: transparent;
+  border: none;
+  color: currentColor;
+  cursor: pointer;
+  padding: 0;
+  opacity: 0.6;
+  line-height: 1;
+}
+.voyagent-toast-dismiss:hover {
+  opacity: 1;
+}
+.voyagent-toast-dismiss:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+@keyframes voyagent-toast-in {
+  from {
+    transform: translateX(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
 }
 
 /* The chat transcript uses a min-height-0 hack to let flex children shrink;

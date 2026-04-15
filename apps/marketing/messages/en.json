@@ -1,0 +1,21 @@
+{
+  "nav.product": "Product",
+  "nav.features": "Features",
+  "nav.architecture": "Architecture",
+  "nav.integrations": "Integrations",
+  "nav.security": "Security",
+  "nav.pricing": "Pricing",
+  "nav.changelog": "Changelog",
+  "nav.docs": "Docs",
+  "nav.apiReference": "API reference",
+
+  "hero.signIn": "Sign in",
+  "hero.getStarted": "Get started",
+
+  "docs.api.title": "API reference",
+  "docs.api.subtitle": "Every endpoint the voyagent platform exposes, grouped by path.",
+  "docs.api.unavailable": "API reference temporarily unavailable",
+
+  "common.loading": "Loading...",
+  "common.error": "Error"
+}

@@ -27,6 +27,7 @@ from voyagent_api.audit import record_auth_failure, router as audit_router
 from voyagent_api.auth_inhouse.routes import router as auth_router
 from voyagent_api.enquiries import router as enquiries_router
 from voyagent_api.reports import router as reports_router
+from voyagent_api.tenant_settings import router as tenant_settings_router
 from voyagent_api.auth_inhouse.settings import get_auth_settings
 from voyagent_api.observability import init_sentry, tenant_tagging_middleware
 from voyagent_api.metrics import router as metrics_router
@@ -73,6 +74,7 @@ app.include_router(approvals_router)
 app.include_router(enquiries_router)
 app.include_router(audit_router)
 app.include_router(metrics_router)
+app.include_router(tenant_settings_router)
 app.add_middleware(tenant_tagging_middleware)
 
 
