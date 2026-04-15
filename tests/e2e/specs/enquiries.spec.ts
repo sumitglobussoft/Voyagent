@@ -73,11 +73,15 @@ test.describe("enquiries", () => {
       page.getByRole("link", { name: customer, exact: true }),
     ).toBeVisible();
 
-    // Full-text search. Submit via the Apply button.
-    await page.getByLabel("Search").fill(customer);
+    // Full-text search. Submit via Enter on the input — on mobile the
+    // filter bar wraps so the Apply button overlaps the input and the
+    // click gets intercepted. Pressing Enter on the input is the same
+    // form submission without the layout race.
+    const searchInput = page.getByLabel("Search");
+    await searchInput.fill(customer);
     await Promise.all([
       page.waitForLoadState("domcontentloaded"),
-      page.getByRole("button", { name: /^apply$/i }).click(),
+      searchInput.press("Enter"),
     ]);
 
     const matchingRows = page.getByRole("link", { name: customer, exact: true });
