@@ -34,6 +34,7 @@ export const SIDEBAR_WIDTH = 256;
 export function AppSidebar({ user }: { user: PublicUser }): ReactElement {
   return (
     <aside
+      className="voyagent-sidebar"
       style={{
         width: SIDEBAR_WIDTH,
         flex: `0 0 ${SIDEBAR_WIDTH}px`,

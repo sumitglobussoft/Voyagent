@@ -29,6 +29,17 @@ export default async function AuthedLayout({ children }: { children: ReactNode }
 
   return (
     <div style={{ display: "flex", minHeight: "100dvh" }}>
+      {/* Hide the sidebar on narrow viewports (<768px). The 256px
+          sidebar overlaps page content on a ~400px mobile viewport and
+          blocks clicks. Proper mobile drawer is a follow-up; for now
+          mobile users see the page content full-width without sidebar
+          nav. The `voyagent-sidebar` class + media query below
+          accomplishes this without introducing a CSS framework. */}
+      <style>{`
+        @media (max-width: 767px) {
+          .voyagent-sidebar { display: none !important; }
+        }
+      `}</style>
       <AppSidebar user={user} />
       {/* The individual pages render their own <main> element, so this
           wrapper is a plain <div> to avoid nested <main> landmarks. */}
