@@ -30,7 +30,7 @@ agency (IATA / TAAI / TAFI accreditation in India; equivalent abroad).
 **Steps:**
 
 1. If you don't already have a TBO account, register at
-   <https://www.tboholidays.com/> → "Register" / "Become a partner".
+   [tboholidays.com](https://www.tboholidays.com/) → "Register" / "Become a partner".
    Approval can take 3-7 business days; you'll need to upload your
    agency licence and GST certificate.
 2. Once active, request **API access** from your TBO account manager.
@@ -62,7 +62,7 @@ issue real tickets.
 
 **Steps:**
 
-1. Sign up at <https://developers.amadeus.com> (free, instant).
+1. Sign up at [developers.amadeus.com](https://developers.amadeus.com) (free, instant).
 2. Create a new app in the developer portal.
 3. Copy the **Client ID** and **Client Secret**.
 
@@ -80,13 +80,14 @@ a live ticketing system.
 
 **Account type:** Amadeus Travel Agency (ATA) accreditation in your
 operating country. In India, this goes through **Amadeus India** at
-<https://amadeus.com/en/about/our-locations/asia-pacific/india>. In
-other regions, your local Amadeus office.
+[amadeus.com/en/about/our-locations/asia-pacific/india](https://amadeus.com/en/about/our-locations/asia-pacific/india).
+In other regions, your local Amadeus office.
 
 **Steps:**
 
 1. Contact Amadeus enterprise sales via
-   <https://amadeus.com/en/contact-us> or your regional Amadeus office.
+   [amadeus.com/en/contact-us](https://amadeus.com/en/contact-us) or
+   your regional Amadeus office.
 2. You'll go through their accreditation process (commercial paperwork,
    technical onboarding, training). This typically takes **2-6 weeks**.
 3. Once accredited, request the **Amadeus Web Services** kit
@@ -115,7 +116,7 @@ will also work for testing but cannot post to production.
 **Steps:**
 
 1. If you don't have Tally Prime, download from
-   <https://tallysolutions.com/download/>. Production licence is roughly
+   [tallysolutions.com/download](https://tallysolutions.com/download/). Production licence is roughly
    ₹18,000-22,000 one-time (single user) — buy through any Tally partner
    in your city.
 2. Install on the desktop machine that will be the "accounting host"
@@ -127,7 +128,7 @@ will also work for testing but cannot post to production.
    - Set **Enable ODBC server** → `Yes`
    - Save and restart Tally Prime.
 4. Confirm Tally is listening: open a browser on the same machine and
-   visit <http://localhost:9000>. You should see a basic XML response
+   visit `http://localhost:9000`. You should see a basic XML response
    from Tally (not a connection error).
 
 **What to send us:**
@@ -164,9 +165,9 @@ VFS does not have a developer / API tier — automation is per-portal.
 
 1. Pick the portal you want first. Highest-volume options for Indian
    travel agencies:
-   - **UAE visa via VFS** — <https://visa.vfsglobal.com/are/en/>
-   - **UK visa via VFS** — <https://visa.vfsglobal.com/gbr/en/>
-   - **Schengen via VFS** — <https://www.vfsglobal.com/en/individuals/index.html>
+   - **UAE visa via VFS** — [visa.vfsglobal.com/are/en](https://visa.vfsglobal.com/are/en/)
+   - **UK visa via VFS** — [visa.vfsglobal.com/gbr/en](https://visa.vfsglobal.com/gbr/en/)
+   - **Schengen via VFS** — [vfsglobal.com/en/individuals](https://www.vfsglobal.com/en/individuals/index.html)
 2. Confirm one of your test agencies has an **active account** on that
    portal — username + password that can log in and start an application.
 3. Record a **2-5 minute screen capture** of one full application going
@@ -203,11 +204,11 @@ free and instant; production requires a partner contract.
 
 **Steps:**
 
-1. Sign up at <https://developer.hotelbeds.com/sign-up>.
+1. Sign up at [developer.hotelbeds.com/sign-up](https://developer.hotelbeds.com/sign-up).
 2. Verify your email; the developer portal gives you instant sandbox
    API key + secret.
 3. For production, contact Hotelbeds sales via
-   <https://www.hotelbeds.com/> → "Become a partner".
+   [hotelbeds.com](https://www.hotelbeds.com/) → "Become a partner".
 
 **What to send us:**
 - Hotelbeds API Key
