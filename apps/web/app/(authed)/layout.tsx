@@ -4,6 +4,12 @@
  * Wraps every page under ``app/(authed)`` with a persistent left
  * sidebar (``AppSidebar``) and a flexible main content column.
  *
+ * On viewports <768px the sidebar is swapped for a top-bar hamburger
+ * (``MobileHeader``) that opens a slide-in drawer rendering the same
+ * sidebar content. Responsive visibility is handled entirely via CSS
+ * helpers in ``globals.css`` (``.voyagent-sidebar`` /
+ * ``.voyagent-mobile-only``) so neither surface regresses the other.
+ *
  * The middleware already redirects unauthenticated traffic to the
  * sign-in page, but we defend-in-depth here by calling
  * ``getCurrentUser()`` and redirecting if it comes back null — this
@@ -14,6 +20,7 @@ import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { AppSidebar } from "@/components/AppSidebar";
+import { MobileHeader } from "@/components/MobileHeader";
 import { getCurrentUser } from "@/lib/auth";
 
 export default async function AuthedLayout({ children }: { children: ReactNode }) {
@@ -29,17 +36,6 @@ export default async function AuthedLayout({ children }: { children: ReactNode }
 
   return (
     <div style={{ display: "flex", minHeight: "100dvh" }}>
-      {/* Hide the sidebar on narrow viewports (<768px). The 256px
-          sidebar overlaps page content on a ~400px mobile viewport and
-          blocks clicks. Proper mobile drawer is a follow-up; for now
-          mobile users see the page content full-width without sidebar
-          nav. The `voyagent-sidebar` class + media query below
-          accomplishes this without introducing a CSS framework. */}
-      <style>{`
-        @media (max-width: 767px) {
-          .voyagent-sidebar { display: none !important; }
-        }
-      `}</style>
       <AppSidebar user={user} />
       {/* The individual pages render their own <main> element, so this
           wrapper is a plain <div> to avoid nested <main> landmarks. */}
@@ -52,6 +48,7 @@ export default async function AuthedLayout({ children }: { children: ReactNode }
           background: "#fafafa",
         }}
       >
+        <MobileHeader user={user} />
         {children}
       </div>
     </div>

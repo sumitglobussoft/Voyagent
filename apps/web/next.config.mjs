@@ -1,3 +1,5 @@
+import { withSentryConfig } from "@sentry/nextjs";
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
@@ -11,4 +13,20 @@ const nextConfig = {
   basePath: "/app",
 };
 
-export default nextConfig;
+// Sentry wrapping is a no-op at runtime if SENTRY_DSN is unset; the
+// withSentryConfig call itself is cheap at build time. Source-map
+// upload is only attempted when SENTRY_AUTH_TOKEN is present.
+export default withSentryConfig(
+  nextConfig,
+  {
+    silent: true,
+    org: process.env.SENTRY_ORG,
+    project: process.env.SENTRY_PROJECT_WEB,
+  },
+  {
+    widenClientFileUpload: true,
+    transpileClientSDK: false,
+    tunnelRoute: "/monitoring",
+    hideSourceMaps: true,
+  },
+);

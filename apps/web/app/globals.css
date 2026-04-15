@@ -15,6 +15,107 @@ html {
   overflow-y: auto;
 }
 
+/* Mobile drawer + responsive visibility helpers.
+ *
+ * ``voyagent-mobile-only`` is block on <768px and hidden elsewhere;
+ * the desktop sidebar flips the opposite way via the existing
+ * ``voyagent-sidebar`` selector below so only one nav surface is
+ * visible at any viewport width.
+ */
+.voyagent-mobile-only {
+  display: none;
+}
+@media (max-width: 767px) {
+  .voyagent-sidebar {
+    display: none !important;
+  }
+  .voyagent-mobile-only {
+    display: block;
+  }
+}
+
+/* Mobile top bar — hamburger + wordmark. */
+.voyagent-mobile-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: #f4f4f5;
+  border-bottom: 1px solid #e5e7eb;
+  position: sticky;
+  top: 0;
+  z-index: 40;
+}
+.voyagent-hamburger {
+  display: inline-flex;
+  flex-direction: column;
+  justify-content: space-between;
+  width: 36px;
+  height: 36px;
+  padding: 9px 7px;
+  background: transparent;
+  border: 1px solid #d4d4d8;
+  border-radius: 8px;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+.voyagent-hamburger span {
+  display: block;
+  height: 2px;
+  width: 100%;
+  background: #18181b;
+  border-radius: 2px;
+}
+.voyagent-hamburger:focus-visible {
+  outline: 2px solid #18181b;
+  outline-offset: 2px;
+}
+.voyagent-mobile-wordmark {
+  font-weight: 700;
+  font-size: 18px;
+  color: #111;
+  text-decoration: none;
+}
+
+/* Drawer backdrop — dims the page while open. Always mounted so
+   transitions run on both entry and exit; ``data-open`` toggles
+   opacity and pointer-events. */
+.voyagent-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 200ms ease;
+  z-index: 50;
+}
+.voyagent-drawer-backdrop[data-open="true"] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Drawer panel — 280px wide, slides in from the left. */
+.voyagent-drawer-panel {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 280px;
+  max-width: 85vw;
+  background: #f4f4f5;
+  border-right: 1px solid #e5e7eb;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  transform: translateX(-100%);
+  transition: transform 240ms ease;
+  z-index: 51;
+  overflow: hidden;
+}
+.voyagent-drawer-panel[data-open="true"] {
+  transform: translateX(0);
+}
+
 /* Subtle custom scrollbar — just on desktop. */
 @media (min-width: 768px) {
   .voyagent-scroll-y::-webkit-scrollbar {

@@ -146,6 +146,40 @@ export async function listChatSessions(
  * FastAPI errors look like `{ "detail": "approval_already_resolved" }`
  * so this covers most of what the API surfaces to us.
  */
+export type InviteSummary = {
+  id: string;
+  tenant_id: string;
+  email: string;
+  role: string;
+  status: string;
+  expires_at: string;
+  created_at: string;
+  accepted_at: string | null;
+  revoked_at: string | null;
+  invited_by_user_id: string;
+};
+
+export type InviteListResponse = { items: InviteSummary[] };
+
+export type CreateInviteResponse = {
+  invite: InviteSummary;
+  invite_link: string;
+};
+
+export type UpdateProfileResponse = {
+  user: {
+    id: string;
+    email: string;
+    full_name: string | null;
+    role: string;
+    tenant_id: string;
+    tenant_name: string;
+    created_at: string;
+    email_verified: boolean;
+  };
+  email_verification_required: boolean;
+};
+
 export function apiErrorCode(data: unknown): string | null {
   if (
     typeof data === "object" &&

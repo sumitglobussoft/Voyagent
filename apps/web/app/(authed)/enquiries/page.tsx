@@ -133,31 +133,31 @@ export default async function EnquiriesPage({
         </Link>
       </div>
 
+      {/*
+       * Responsive filter bar.
+       *
+       * Below sm: (640px) everything stacks into a column so on a
+       * Pixel 5 (393px) the search input can't overflow across the
+       * Apply button and swallow clicks. Each control is full-width
+       * on mobile; Apply stays full-width on mobile, auto on desktop.
+       * At sm and up the original horizontal row is restored.
+       */}
       <form
         method="get"
         action="/app/enquiries"
-        style={{
-          display: "flex",
-          gap: 8,
-          marginBottom: 16,
-          flexWrap: "wrap",
-          alignItems: "center",
-        }}
+        className="mb-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center"
       >
-        <label htmlFor="status" style={{ fontSize: 13, color: "#555" }}>
+        <label
+          htmlFor="status"
+          className="text-[13px] text-neutral-600 sm:mr-1"
+        >
           Status
         </label>
         <select
           id="status"
           name="status"
           defaultValue={status}
-          style={{
-            padding: "6px 8px",
-            border: "1px solid #d4d4d8",
-            borderRadius: 6,
-            fontSize: 14,
-            background: "#fff",
-          }}
+          className="w-full rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm sm:w-auto"
         >
           {STATUS_OPTIONS.map((s) => (
             <option key={s} value={s}>
@@ -165,7 +165,10 @@ export default async function EnquiriesPage({
             </option>
           ))}
         </select>
-        <label htmlFor="q" style={{ fontSize: 13, color: "#555" }}>
+        <label
+          htmlFor="q"
+          className="text-[13px] text-neutral-600 sm:mr-1"
+        >
           Search
         </label>
         <input
@@ -174,24 +177,11 @@ export default async function EnquiriesPage({
           type="search"
           defaultValue={q}
           placeholder="name, destination…"
-          style={{
-            padding: "6px 10px",
-            border: "1px solid #d4d4d8",
-            borderRadius: 6,
-            fontSize: 14,
-            minWidth: 220,
-          }}
+          className="w-full rounded-md border border-neutral-300 px-2.5 py-1.5 text-sm sm:w-auto sm:min-w-[220px]"
         />
         <button
           type="submit"
-          style={{
-            background: "#f3f4f6",
-            border: "1px solid #d4d4d8",
-            borderRadius: 6,
-            padding: "6px 12px",
-            fontSize: 14,
-            cursor: "pointer",
-          }}
+          className="w-full cursor-pointer rounded-md border border-neutral-300 bg-neutral-100 px-3 py-1.5 text-sm sm:w-auto"
         >
           Apply
         </button>

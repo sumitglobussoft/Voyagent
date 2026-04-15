@@ -22,9 +22,15 @@ export interface NavLinkProps {
    * up the Enquiries link).
    */
   exact?: boolean;
+  /**
+   * Optional click callback. Used by the mobile drawer to close itself
+   * when the user taps a nav link so they see the destination page,
+   * not the drawer they just navigated from.
+   */
+  onClick?: () => void;
 }
 
-export function NavLink({ href, label, icon, exact = false }: NavLinkProps): ReactElement {
+export function NavLink({ href, label, icon, exact = false, onClick }: NavLinkProps): ReactElement {
   const pathname = usePathname() ?? "/";
   // `usePathname` returns paths without the Next basePath prefix, so
   // ``href="/enquiries"`` matches pathname ``/enquiries`` directly.
@@ -35,6 +41,7 @@ export function NavLink({ href, label, icon, exact = false }: NavLinkProps): Rea
   return (
     <Link
       href={href}
+      onClick={onClick}
       style={{
         display: "flex",
         alignItems: "center",

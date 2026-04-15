@@ -82,9 +82,129 @@ def burn_dummy_verify() -> None:
         pass
 
 
+# --------------------------------------------------------------------------- #
+# Password strength                                                           #
+# --------------------------------------------------------------------------- #
+
+
+class PasswordTooWeakError(ValueError):
+    """Raised by :func:`validate_password_strength` on a weak password.
+
+    The ``code`` attribute carries a stable machine-readable error code
+    (e.g. ``password_too_short``) so routes can surface it as a detail
+    string without string-matching the English message.
+    """
+
+    def __init__(self, code: str, message: str | None = None) -> None:
+        super().__init__(message or code)
+        self.code = code
+
+
+# Small hand-rolled blocklist of the most obvious bad passwords. Kept
+# deliberately short — this is NOT a "top N leaked passwords" list, just
+# a guardrail against the passwords users actually try first. Compared
+# case-insensitively after whitespace stripping.
+_COMMON_PASSWORDS: frozenset[str] = frozenset(
+    {
+        "password",
+        "password1",
+        "password12",
+        "password123",
+        "password1234",
+        "passw0rd",
+        "passw0rd1",
+        "passw0rd123",
+        "qwerty",
+        "qwerty123",
+        "qwertyuiop",
+        "qwerty1234",
+        "letmein",
+        "letmein1",
+        "letmein123",
+        "welcome",
+        "welcome1",
+        "welcome123",
+        "admin",
+        "admin1",
+        "admin123",
+        "administrator",
+        "root",
+        "root123",
+        "toor",
+        "iloveyou",
+        "iloveyou1",
+        "monkey",
+        "monkey123",
+        "dragon",
+        "dragon123",
+        "master",
+        "master123",
+        "abc123",
+        "abc12345",
+        "abcd1234",
+        "123abc",
+        "123456",
+        "1234567",
+        "12345678",
+        "123456789",
+        "1234567890",
+        "111111",
+        "000000",
+        "696969",
+        "trustno1",
+        "sunshine",
+        "princess",
+        "football",
+        "baseball",
+        "superman",
+        "batman123",
+        "voyagent",
+        "voyagent1",
+        "voyagent123",
+        "travel123",
+        "changeme",
+        "changeme1",
+        "changeme123",
+    }
+)
+
+
+_MIN_PASSWORD_LENGTH = 10
+_MAX_PASSWORD_LENGTH = 128
+
+
+def validate_password_strength(password: str) -> None:
+    """Raise :class:`PasswordTooWeakError` if ``password`` is too weak.
+
+    Deterministic rule-based checker — no zxcvbn. Rules applied, in
+    order:
+
+    1. Not exclusively whitespace.
+    2. Length >= 10.
+    3. Length <= 128 (defensive upper bound).
+    4. Contains at least one letter.
+    5. Contains at least one digit.
+    6. Not in the :data:`_COMMON_PASSWORDS` blocklist.
+    """
+    if password is None or not password.strip():
+        raise PasswordTooWeakError("password_blank")
+    if len(password) < _MIN_PASSWORD_LENGTH:
+        raise PasswordTooWeakError("password_too_short")
+    if len(password) > _MAX_PASSWORD_LENGTH:
+        raise PasswordTooWeakError("password_too_long")
+    if not any(c.isalpha() for c in password):
+        raise PasswordTooWeakError("password_no_letter")
+    if not any(c.isdigit() for c in password):
+        raise PasswordTooWeakError("password_no_digit")
+    if password.strip().lower() in _COMMON_PASSWORDS:
+        raise PasswordTooWeakError("password_common")
+
+
 __all__ = [
+    "PasswordTooWeakError",
     "burn_dummy_verify",
     "hash_password",
     "needs_rehash",
+    "validate_password_strength",
     "verify_password",
 ]

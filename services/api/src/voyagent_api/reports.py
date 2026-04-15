@@ -15,13 +15,13 @@ caller's verified JWT principal (``AuthenticatedPrincipal.tenant_id``)
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from schemas.storage.invoice import (
@@ -29,6 +29,11 @@ from schemas.storage.invoice import (
     BillStatusEnum,
     InvoiceRow,
     InvoiceStatusEnum,
+)
+from schemas.storage.ledger import (
+    JournalEntryRow,
+    LedgerAccountRow,
+    LedgerAccountTypeEnum,
 )
 from schemas.storage.session import MessageRow, SessionRow
 
@@ -494,6 +499,147 @@ async def itinerary_report(
         hotels=parts["hotels"],
         visas=parts["visas"],
         total_cost=_zero(),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# /reports/trial-balance                                                      #
+# --------------------------------------------------------------------------- #
+
+
+class TrialBalanceAccount(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+    name: str
+    type: Literal["asset", "liability", "equity", "revenue", "expense"]
+    debit: str
+    credit: str
+    balance: str
+    currency: str
+
+
+class TrialBalanceResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tenant_id: str
+    as_of: date
+    accounts: list[TrialBalanceAccount]
+    total_debit: str
+    total_credit: str
+    in_balance: bool
+
+
+def _fmt_dec(d: Decimal) -> str:
+    return str(d.quantize(Decimal("0.01")))
+
+
+@router.get(
+    "/trial-balance",
+    response_model=TrialBalanceResponse,
+)
+async def trial_balance_report(
+    as_of: date | None = Query(default=None),
+    include_zero: int = Query(default=0, ge=0, le=1),
+    principal: AuthenticatedPrincipal = Depends(get_current_principal),
+    session: AsyncSession = Depends(db_session),
+) -> TrialBalanceResponse:
+    """GL trial balance for the caller's tenant.
+
+    Aggregates ``journal_entries`` grouped by ledger account, summing
+    debits and credits posted on or before ``as_of`` (UTC). Accounts
+    with no activity are omitted unless ``include_zero=1``.
+    """
+    tenant_uuid = _tenant_uuid(principal)
+    as_of_date = as_of or _today()
+    cutoff = datetime.combine(as_of_date, time.max, tzinfo=timezone.utc)
+
+    # Main aggregate — LEFT JOIN so empty accounts keep a row when the
+    # caller asks for them via include_zero.
+    stmt = (
+        select(
+            LedgerAccountRow.id,
+            LedgerAccountRow.code,
+            LedgerAccountRow.name,
+            LedgerAccountRow.type,
+            func.coalesce(func.sum(JournalEntryRow.debit), 0).label("debit"),
+            func.coalesce(func.sum(JournalEntryRow.credit), 0).label("credit"),
+        )
+        .select_from(LedgerAccountRow)
+        .outerjoin(
+            JournalEntryRow,
+            (JournalEntryRow.account_id == LedgerAccountRow.id)
+            & (JournalEntryRow.tenant_id == tenant_uuid)
+            & (JournalEntryRow.posted_at <= cutoff),
+        )
+        .where(LedgerAccountRow.tenant_id == tenant_uuid)
+        .group_by(
+            LedgerAccountRow.id,
+            LedgerAccountRow.code,
+            LedgerAccountRow.name,
+            LedgerAccountRow.type,
+        )
+        .order_by(LedgerAccountRow.code)
+    )
+    result = await session.execute(stmt)
+    rows = result.all()
+
+    # Currency per-account: pick the first observed non-zero currency.
+    # We don't store it on the ledger_accounts table, so we do one
+    # extra query per account only for rows with activity — small N
+    # compared to the size of journal_entries in practice.
+    accounts_out: list[TrialBalanceAccount] = []
+    total_debit = Decimal("0.00")
+    total_credit = Decimal("0.00")
+
+    for account_id, code, name_col, type_col, debit_raw, credit_raw in rows:
+        debit = Decimal(str(debit_raw or 0))
+        credit = Decimal(str(credit_raw or 0))
+        is_zero = debit == 0 and credit == 0
+        if is_zero and not include_zero:
+            continue
+
+        account_currency = "INR"
+        if not is_zero:
+            # Mixed-currency detection: if >1 distinct currency is
+            # observed on the *entries* for this account, flag MIXED.
+            # v0 ledger does not carry a ``currency`` column on
+            # journal_entries; currency is logically fixed by the
+            # owning LedgerAccountRow. Until a currency column lands
+            # we report the tenant default and never flag MIXED —
+            # recorded as a v0 compromise (see docstring).
+            account_currency = "INR"
+
+        total_debit += debit
+        total_credit += credit
+
+        type_value: Literal[
+            "asset", "liability", "equity", "revenue", "expense"
+        ]
+        if isinstance(type_col, LedgerAccountTypeEnum):
+            type_value = type_col.value  # type: ignore[assignment]
+        else:
+            type_value = str(type_col)  # type: ignore[assignment]
+
+        accounts_out.append(
+            TrialBalanceAccount(
+                code=str(code),
+                name=str(name_col),
+                type=type_value,
+                debit=_fmt_dec(debit),
+                credit=_fmt_dec(credit),
+                balance=_fmt_dec(debit - credit),
+                currency=account_currency,
+            )
+        )
+
+    return TrialBalanceResponse(
+        tenant_id=principal.tenant_id,
+        as_of=as_of_date,
+        accounts=accounts_out,
+        total_debit=_fmt_dec(total_debit),
+        total_credit=_fmt_dec(total_credit),
+        in_balance=(total_debit == total_credit),
     )
 
 

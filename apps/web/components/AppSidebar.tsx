@@ -13,10 +13,11 @@
  *   - User card at the bottom with avatar, name, tenant, role badge
  *     and sign-out form.
  *
- * Styling uses the existing inline-style approach so we don't have to
- * introduce Tailwind / Tamagui / CSS modules to this app (which uses
- * none today). Right border + slightly off-white background
- * differentiate the sidebar from the ``#fafafa`` main content area.
+ * The body of the sidebar is factored into ``SidebarContent`` so the
+ * mobile drawer can re-use exactly the same markup without the sticky
+ * column chrome that only makes sense on desktop. ``AppSidebar`` is
+ * the desktop-only variant that wraps ``SidebarContent`` in a sticky
+ * 256px column; CSS in ``globals.css`` hides it on <768px viewports.
  */
 import Link from "next/link";
 import { Suspense, type ReactElement } from "react";
@@ -31,24 +32,25 @@ import { UserCard } from "./UserCard";
 
 export const SIDEBAR_WIDTH = 256;
 
-export function AppSidebar({ user }: { user: PublicUser }): ReactElement {
+/**
+ * Inner sidebar body — renders wordmark, "new chat" pill, recent
+ * sessions, workspace nav, and the user card. Takes no layout props;
+ * the wrapper (sticky column vs. mobile drawer panel) is responsible
+ * for sizing and positioning.
+ *
+ * ``onNavClick`` is invoked when any workspace nav link or the
+ * "New chat" pill is tapped. The mobile drawer uses this to close
+ * itself on navigation so the user sees the new page, not the drawer.
+ */
+export function SidebarContent({
+  user,
+  onNavClick,
+}: {
+  user: PublicUser;
+  onNavClick?: () => void;
+}): ReactElement {
   return (
-    <aside
-      className="voyagent-sidebar"
-      style={{
-        width: SIDEBAR_WIDTH,
-        flex: `0 0 ${SIDEBAR_WIDTH}px`,
-        height: "100dvh",
-        position: "sticky",
-        top: 0,
-        background: "#f4f4f5",
-        borderRight: "1px solid #e5e7eb",
-        display: "flex",
-        flexDirection: "column",
-        boxSizing: "border-box",
-        overflow: "hidden",
-      }}
-    >
+    <>
       {/* Top — wordmark + new chat */}
       <div style={{ padding: "14px 12px 8px 12px" }}>
         <a
@@ -66,6 +68,7 @@ export function AppSidebar({ user }: { user: PublicUser }): ReactElement {
         </a>
         <Link
           href="/chat?new=1"
+          onClick={onNavClick}
           style={{
             display: "flex",
             alignItems: "center",
@@ -169,22 +172,63 @@ export function AppSidebar({ user }: { user: PublicUser }): ReactElement {
         >
           Workspace
         </div>
-        <NavLink href="/chat" label="Chat" icon={<Send size={16} />} />
+        <NavLink
+          href="/chat"
+          label="Chat"
+          icon={<Send size={16} />}
+          onClick={onNavClick}
+        />
         <NavLink
           href="/enquiries"
           label="Enquiries"
           icon={<FileText size={16} />}
+          onClick={onNavClick}
         />
         <NavLink
           href="/approvals"
           label="Approvals"
           icon={<Check size={16} />}
+          onClick={onNavClick}
         />
-        <NavLink href="/audit" label="Audit" icon={<Receipt size={16} />} />
+        <NavLink
+          href="/audit"
+          label="Audit"
+          icon={<Receipt size={16} />}
+          onClick={onNavClick}
+        />
+        <NavLink
+          href="/settings"
+          label="Settings"
+          icon={<Receipt size={16} />}
+          onClick={onNavClick}
+        />
       </div>
 
       {/* Bottom — user */}
       <UserCard user={user} />
+    </>
+  );
+}
+
+export function AppSidebar({ user }: { user: PublicUser }): ReactElement {
+  return (
+    <aside
+      className="voyagent-sidebar"
+      style={{
+        width: SIDEBAR_WIDTH,
+        flex: `0 0 ${SIDEBAR_WIDTH}px`,
+        height: "100dvh",
+        position: "sticky",
+        top: 0,
+        background: "#f4f4f5",
+        borderRight: "1px solid #e5e7eb",
+        display: "flex",
+        flexDirection: "column",
+        boxSizing: "border-box",
+        overflow: "hidden",
+      }}
+    >
+      <SidebarContent user={user} />
     </aside>
   );
 }

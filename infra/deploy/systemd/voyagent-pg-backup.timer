@@ -1,0 +1,14 @@
+[Unit]
+Description=Nightly trigger for voyagent-pg-backup.service
+Documentation=https://github.com/voyagent/gbs-agentic-travel/blob/main/docs/RUNBOOK.md
+
+[Timer]
+# 02:00 UTC every day. Persistent=true catches up after host downtime so
+# a missed run fires once on the next boot.
+OnCalendar=*-*-* 02:00:00 UTC
+Persistent=true
+AccuracySec=1min
+Unit=voyagent-pg-backup.service
+
+[Install]
+WantedBy=timers.target

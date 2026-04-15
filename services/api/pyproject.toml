@@ -20,6 +20,9 @@ dependencies = [
     "voyagent-schemas-canonical",
     "voyagent-schemas-storage",
     "voyagent-agent-runtime",
+    "sentry-sdk[fastapi]>=2.10",
+    "prometheus-client>=0.20",
+    "pyotp>=2.9.0",
 ]
 
 [tool.uv.sources.voyagent-schemas-storage]

@@ -1,0 +1,9 @@
+# Default owner — every PR gets a review request from @voyagent-maintainers.
+*                               @voyagent-maintainers
+
+# Infra + deploy require an extra set of eyes.
+/infra/                         @voyagent-maintainers
+/.github/                       @voyagent-maintainers
+/deploy_native.py               @voyagent-maintainers
+/docs/RUNBOOK.md                @voyagent-maintainers
+/docs/CI.md                     @voyagent-maintainers

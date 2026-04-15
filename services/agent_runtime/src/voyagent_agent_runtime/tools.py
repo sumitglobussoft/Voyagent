@@ -970,6 +970,50 @@ CREATE_INVOICE_SCHEMA: dict[str, Any] = {
 }
 
 
+DRAFT_INVOICE_SCHEMA: dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "required": ["customer_name", "issue_date", "due_date", "line_items"],
+    "properties": {
+        "customer_name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Customer / debtor name. Required.",
+        },
+        "party_reference": {
+            "type": ["string", "null"],
+            "description": "Optional passenger id / enquiry id / session id.",
+        },
+        "issue_date": {"type": "string", "format": "date"},
+        "due_date": {"type": "string", "format": "date"},
+        "line_items": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "required": ["description", "quantity", "unit_price", "currency"],
+                "properties": {
+                    "description": {"type": "string", "minLength": 1},
+                    "quantity": {"type": "integer", "minimum": 1},
+                    "unit_price": {
+                        "type": "string",
+                        "description": 'Decimal string, e.g. "12500.00"',
+                    },
+                    "currency": {"type": "string", "pattern": r"^[A-Z]{3}$"},
+                },
+                "additionalProperties": False,
+            },
+        },
+        "notes": {"type": ["string", "null"]},
+        "number": {
+            "type": ["string", "null"],
+            "description": "Invoice number; auto-generated if omitted.",
+        },
+    },
+    "additionalProperties": False,
+}
+
+
 FETCH_BSP_STATEMENT_SCHEMA: dict[str, Any] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
@@ -1013,6 +1057,11 @@ READ_ACCOUNT_BALANCE_SCHEMA: dict[str, Any] = {
 # Keys used to stash per-runtime caches on ``ctx.extensions``.
 BSP_REPORTS_CACHE_KEY = "bsp_reports_cache"
 TICKETS_STORE_KEY = "tickets_store"
+# An ``async_sessionmaker`` pointing at the runtime's primary DB. Tools
+# that write directly to the storage schema (e.g. ``draft_invoice``)
+# look up this key; tests inject an aiosqlite-backed sessionmaker, and
+# production wires the API/runtime default sessionmaker here.
+DB_SESSIONMAKER_KEY = "db_sessionmaker"
 
 
 def _fmt_money(amount: Decimal, currency: str) -> str:
@@ -1183,6 +1232,178 @@ async def create_invoice(
         "created": True,
         "invoice_id": invoice_id,
         "invoice_number": invoice.invoice_number,
+    }
+
+
+async def _draft_invoice_sessionmaker(ctx: ToolContext) -> Any:
+    """Resolve the ``async_sessionmaker`` used by ``draft_invoice``.
+
+    Preference: an explicit sessionmaker placed on ``ctx.extensions``
+    under :data:`DB_SESSIONMAKER_KEY` (tests and multi-tenant wiring).
+    Fallback: the API process-wide sessionmaker from
+    :mod:`voyagent_api.db` (production single-tenant bootstrap).
+    """
+    sm = ctx.extensions.get(DB_SESSIONMAKER_KEY)
+    if sm is not None:
+        return sm
+    from voyagent_api import db as _db  # local import: keep tools.py import light
+
+    return _db.get_sessionmaker()
+
+
+@tool(
+    name="draft_invoice",
+    description=(
+        "Draft an invoice for a customer. Saved with status='draft'. Does "
+        "NOT post to the ledger. Requires finance approval on first "
+        "invocation."
+    ),
+    domain="accounting",
+    input_schema=DRAFT_INVOICE_SCHEMA,
+    side_effect=True,
+    reversible=True,
+    approval_required=True,
+    approval_roles=["accountant", "admin"],
+)
+async def draft_invoice(
+    tool_input: dict[str, Any], ctx: ToolContext
+) -> dict[str, Any]:
+    """Handler for ``draft_invoice``.
+
+    Writes a ``draft`` row into the ``invoices`` storage table — the
+    human-readable document layer. Does not touch the ledger. Errors
+    are returned as structured payloads (``drafted=False`` +
+    ``error_code``), not raised, so the agent can recover mid-turn.
+    """
+    import re as _re
+
+    from sqlalchemy import func, select
+    from sqlalchemy.exc import IntegrityError
+
+    from schemas.storage.invoice import InvoiceRow, InvoiceStatusEnum
+
+    line_items = tool_input.get("line_items") or []
+    currencies = {str(li["currency"]).upper() for li in line_items}
+    if len(currencies) > 1:
+        return {
+            "drafted": False,
+            "error_code": "mixed_currency",
+            "detail": (
+                "All line items must share one currency; got "
+                f"{sorted(currencies)}."
+            ),
+        }
+    currency = currencies.pop()
+
+    total = Decimal("0.00")
+    for li in line_items:
+        qty = int(li["quantity"])
+        price = Decimal(str(li["unit_price"]))
+        total = (total + (Decimal(qty) * price)).quantize(Decimal("0.01"))
+
+    try:
+        issue_d = date.fromisoformat(tool_input["issue_date"])
+        due_d = date.fromisoformat(tool_input["due_date"])
+    except ValueError as exc:
+        return {
+            "drafted": False,
+            "error_code": "invalid_date",
+            "detail": str(exc),
+        }
+
+    tenant_uuid = uuid.UUID(ctx.tenant_id)
+    sessionmaker = await _draft_invoice_sessionmaker(ctx)
+
+    explicit_number = tool_input.get("number")
+    number: str
+
+    async with sessionmaker() as s:
+        if explicit_number:
+            exists = (
+                await s.execute(
+                    select(InvoiceRow.id).where(
+                        InvoiceRow.tenant_id == tenant_uuid,
+                        InvoiceRow.number == explicit_number,
+                    )
+                )
+            ).scalar_one_or_none()
+            if exists is not None:
+                return {
+                    "drafted": False,
+                    "error_code": "invoice_number_conflict",
+                    "detail": (
+                        f"Invoice number {explicit_number!r} already exists "
+                        f"for this tenant."
+                    ),
+                }
+            number = str(explicit_number)
+        else:
+            # Auto-generate: INV-<TENANT8>-<0001+>. Sequence is scoped
+            # per-tenant by filtering on tenant_id; the regex makes sure
+            # we only count rows that follow the auto-numbered shape for
+            # *this* tenant so human-provided numbers can't pollute the
+            # next sequence value.
+            tenant_prefix = ctx.tenant_id.replace("-", "")[:8].upper()
+            prefix = f"INV-{tenant_prefix}-"
+            existing = (
+                (
+                    await s.execute(
+                        select(InvoiceRow.number).where(
+                            InvoiceRow.tenant_id == tenant_uuid,
+                            InvoiceRow.number.like(f"{prefix}%"),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            pat = _re.compile(rf"^{_re.escape(prefix)}(\d+)$")
+            max_seq = 0
+            for n in existing:
+                m = pat.match(n or "")
+                if m:
+                    try:
+                        seq = int(m.group(1))
+                    except ValueError:
+                        continue
+                    if seq > max_seq:
+                        max_seq = seq
+            number = f"{prefix}{max_seq + 1:04d}"
+
+        row = InvoiceRow(
+            tenant_id=tenant_uuid,
+            number=number,
+            party_name=str(tool_input["customer_name"]),
+            party_reference=tool_input.get("party_reference"),
+            issue_date=issue_d,
+            due_date=due_d,
+            total_amount=total,
+            currency=currency,
+            amount_paid=Decimal("0.00"),
+            status=InvoiceStatusEnum.DRAFT,
+        )
+        s.add(row)
+        try:
+            await s.commit()
+        except IntegrityError:
+            await s.rollback()
+            return {
+                "drafted": False,
+                "error_code": "invoice_number_conflict",
+                "detail": (
+                    f"Concurrent write — invoice number {number!r} was "
+                    f"taken before this insert committed."
+                ),
+            }
+        invoice_id = str(row.id)
+
+    return {
+        "drafted": True,
+        "invoice_id": invoice_id,
+        "number": number,
+        "total_amount": str(total),
+        "currency": currency,
+        "status": "draft",
     }
 
 
@@ -1798,6 +2019,7 @@ ACCOUNTING_TOOL_NAMES: list[str] = [
     "list_ledger_accounts",
     "post_journal_entry",
     "create_invoice",
+    "draft_invoice",
     "fetch_bsp_statement",
     "reconcile_bsp",
     "read_account_balance",
@@ -1808,6 +2030,7 @@ __all__ = [
     "ACCOUNTING_TOOL_NAMES",
     "AuditSink",
     "BSP_REPORTS_CACHE_KEY",
+    "DB_SESSIONMAKER_KEY",
     "DRIVER_REGISTRY_KEY",
     "HOTELS_HOLIDAYS_TOOL_NAMES",
     "InMemoryAuditSink",

@@ -9,7 +9,7 @@ audit.
 from __future__ import annotations
 
 import logging
-from typing import AsyncIterator
+from typing import AsyncIterator, Callable
 
 from fastapi import Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
@@ -180,6 +180,29 @@ async def require_agency_admin(
     return principal
 
 
+def require_role(
+    *roles: str,
+) -> Callable[[AuthenticatedPrincipal], AuthenticatedPrincipal]:
+    """Dependency factory — require the principal's role to be in ``roles``.
+
+    Raises 403 ``forbidden_role`` when the check fails. Use directly on
+    a route via ``Depends(require_role("agency_admin", "ticketing_lead"))``.
+    """
+    allowed = frozenset(roles)
+
+    async def _checker(
+        principal: AuthenticatedPrincipal = Depends(get_current_principal),
+    ) -> AuthenticatedPrincipal:
+        if principal.role not in allowed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="forbidden_role",
+            )
+        return principal
+
+    return _checker
+
+
 async def get_current_user(
     principal: AuthenticatedPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(db_session),
@@ -228,4 +251,5 @@ __all__ = [
     "get_current_principal_optional",
     "get_current_user",
     "require_agency_admin",
+    "require_role",
 ]

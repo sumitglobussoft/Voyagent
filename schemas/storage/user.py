@@ -72,6 +72,22 @@ class User(Base, Timestamps):
         nullable=False,
         server_default=text("false"),
     )
+    # TOTP 2FA. ``totp_secret`` is the base32-encoded shared secret the
+    # authenticator app holds. Nullable until the user kicks off setup.
+    # ``totp_enabled`` only flips true after a successful first-verify.
+    #
+    # TODO(security): encrypt ``totp_secret`` at rest using
+    # ``VOYAGENT_KMS_KEY`` (see schemas.storage.crypto.FernetEnvKMS). For
+    # v0 we store the base32 plaintext so the flow is testable without
+    # wiring the KMS into every sign-in path. Follow-up ticket.
+    totp_secret: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
+    totp_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("false"),
+    )
     last_login_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )

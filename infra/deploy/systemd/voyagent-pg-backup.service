@@ -1,0 +1,29 @@
+[Unit]
+Description=Voyagent Postgres nightly backup
+Documentation=https://github.com/voyagent/gbs-agentic-travel/blob/main/docs/RUNBOOK.md
+Wants=postgresql.service
+After=postgresql.service network-online.target
+
+[Service]
+Type=oneshot
+# The env file holds the voyagent superuser password and is root:adm 0640.
+# Reading it here is why this unit runs as root.
+EnvironmentFile=/etc/voyagent/postgres-master.env
+ExecStart=/opt/voyagent/repo/infra/deploy/scripts/pg-backup.sh
+User=root
+Group=root
+UMask=0027
+# Hardening — the script only needs to read /etc/voyagent and write
+# /opt/voyagent/backups, plus talk to local Postgres.
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+ReadWritePaths=/opt/voyagent/backups
+# stdout/stderr captured in the systemd journal — view with
+# `journalctl -u voyagent-pg-backup.service`
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

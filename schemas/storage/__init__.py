@@ -12,6 +12,7 @@ Re-exports every public model plus :class:`Base` so callers can write
 
 from __future__ import annotations
 
+from .api_key import ApiKeyRow
 from .audit import AuditEventRow, AuditStatusEnum
 from .auth import RefreshTokenRow
 from .base import Base, Timestamps, UUIDType, tenant_id_fk, uuid7, uuid_pk
@@ -35,6 +36,7 @@ from .enquiry import (
     EnquiryRow,
     EnquiryStatusEnum,
 )
+from .invite import InviteRow, InviteStatusEnum
 from .invoice import (
     BILL_STATUS_SATYPE,
     INVOICE_STATUS_SATYPE,
@@ -68,6 +70,7 @@ from .user import User, UserRole
 __all__ = [
     "ACTOR_KIND_SATYPE",
     "APPROVAL_STATUS_SATYPE",
+    "ApiKeyRow",
     "ActorKindEnum",
     "ApprovalStatusEnum",
     "AuditEventRow",
@@ -83,6 +86,8 @@ __all__ = [
     "EnquiryStatusEnum",
     "FernetEnvKMS",
     "INVOICE_STATUS_SATYPE",
+    "InviteRow",
+    "InviteStatusEnum",
     "InvoiceRow",
     "InvoiceStatusEnum",
     "JournalEntryRow",

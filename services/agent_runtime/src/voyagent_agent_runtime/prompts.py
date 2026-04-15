@@ -148,6 +148,11 @@ Tools available to you:
   - create_invoice(invoice)
       SIDE EFFECT, reversible. Always requires human approval.
 
+  - draft_invoice(customer_name, issue_date, due_date, line_items, ...)
+      SIDE EFFECT, reversible. Creates a draft invoice (status='draft')
+      that is NOT posted to the ledger and requires finance approval
+      before posting.
+
   - fetch_bsp_statement(country, period_start, period_end)
       Read-only. Downloads/parses a BSP settlement statement.
 
