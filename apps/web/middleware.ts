@@ -30,50 +30,40 @@ const BASE_PATH = "/app";
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  const publicPrefixes = ["/app/sign-in", "/app/sign-up"];
-  if (publicPrefixes.some((p) => pathname.startsWith(p))) {
-    return NextResponse.next();
-  }
+  // Next 15 with basePath="/app" strips the basePath from pathname inside
+  // middleware. So `/app/enquiries` shows up here as `/enquiries`, and
+  // `/app/sign-in` as `/sign-in`. Normalize either form.
+  const stripped = pathname.startsWith(BASE_PATH)
+    ? pathname.slice(BASE_PATH.length) || "/"
+    : pathname;
 
-  if (!pathname.startsWith("/app")) {
+  // Public sub-routes inside the gated app — let through.
+  if (stripped === "/sign-in" || stripped.startsWith("/sign-in/") ||
+      stripped === "/sign-up" || stripped.startsWith("/sign-up/")) {
     return NextResponse.next();
   }
 
   const at = req.cookies.get(ACCESS_COOKIE)?.value;
   const valid = at && jwtExpMs(at) > Date.now();
+  if (valid) return NextResponse.next();
 
-  if (!valid) {
-    // Strip the /app basePath from `next` so the sign-in action can
-    // pass it directly to redirect() — Next prepends basePath again.
-    const stripped = pathname.startsWith(BASE_PATH)
-      ? pathname.slice(BASE_PATH.length) || "/chat"
-      : pathname;
-    const nextPath = safeNextPath(stripped);
+  const nextPath = safeNextPath(stripped === "/" ? "/chat" : stripped);
 
-    // Build the absolute redirect URL from the inbound public Host +
-    // X-Forwarded-Proto headers — never `req.url`, which carries the
-    // upstream `http://127.0.0.1:3011` when running behind nginx +
-    // `next start -H 127.0.0.1`. Falling through to req.nextUrl.origin
-    // would have the same leak. The base is reconstructed from headers.
-    const proto =
-      req.headers.get("x-forwarded-proto") ?? req.nextUrl.protocol.replace(":", "");
-    const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
-    if (!host) {
-      // Should never happen — every HTTP request carries a Host header. If
-      // it does, fall back to the relative form (browsers handle relative
-      // Location headers fine even though the spec recommends absolute).
-      return NextResponse.redirect(
-        `/app/sign-in?next=${encodeURIComponent(nextPath)}` as unknown as URL,
-      );
-    }
-    const target = new URL(`${proto}://${host}/app/sign-in`);
-    target.searchParams.set("next", nextPath);
-    return NextResponse.redirect(target);
-  }
-
-  return NextResponse.next();
+  // Build the absolute redirect URL from the inbound public host headers.
+  // Using `req.url` or `req.nextUrl.origin` leaks the upstream
+  // `http://127.0.0.1:3011` because we run `next start -H 127.0.0.1`
+  // behind nginx. The host nginx sets X-Forwarded-Host + X-Forwarded-Proto.
+  const proto =
+    req.headers.get("x-forwarded-proto") ?? req.nextUrl.protocol.replace(":", "");
+  const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
+  const base = host ? `${proto}://${host}` : req.nextUrl.origin;
+  const target = new URL("/app/sign-in", base);
+  target.searchParams.set("next", nextPath);
+  return NextResponse.redirect(target);
 }
 
+// Match every path inside the basePath (Next prepends `/app` automatically).
+// Excluding `_next` static assets so we don't gate JS/CSS chunks.
 export const config = {
-  matcher: ["/app/:path*"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 };
